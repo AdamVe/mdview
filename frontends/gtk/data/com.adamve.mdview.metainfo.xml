@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.adamve.mdview</id>
+  <name>mdview</name>
+  <summary>Lightweight Markdown viewer</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <url type="homepage">https://github.com/AdamVe/mdview</url>
+  <url type="bugtracker">https://github.com/AdamVe/mdview/issues</url>
+  <developer id="io.github.adamve">
+    <name>Adam Velebil</name>
+  </developer>
+  <description>
+    <p>mdview renders GitHub Flavored Markdown - headings, tables, task lists, code blocks, images - in a native GTK4 window with search, outline navigation, dark-mode support and copy-as-markdown.</p>
+  </description>
+  <launchable type="desktop-id">com.adamve.mdview.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-11-22"/>
+  </releases>
+</component>

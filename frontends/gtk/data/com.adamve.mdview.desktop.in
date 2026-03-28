@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=mdview
+Comment=Lightweight Markdown Viewer
+Exec=@BINDIR@/mdview %f
+Icon=com.adamve.mdview
+Terminal=false
+Type=Application
+Categories=Utility;TextEditor;
+Keywords=markdown;viewer;preview;gfm;text;
+MimeType=text/markdown;text/x-markdown;
+StartupNotify=true

@@ -1,0 +1,18 @@
+option('adwaita',
+  type: 'feature',
+  value: 'auto',
+  description: 'Use libadwaita for GNOME HIG styling'
+)
+
+option('enable_gtk',
+  type: 'feature',
+  value: 'auto',
+  description: 'Build GTK frontend (requires GTK4 dependencies)'
+)
+
+option('link_cmark',
+  type: 'combo',
+  choices: ['dynamic', 'static'],
+  value: 'dynamic',
+  description: 'Link system libcmark-gfm (default) or fetch sources via Meson wraps'
+)
