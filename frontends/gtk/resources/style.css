@@ -1,14 +1,23 @@
 /* Applied to the TextView for comfortable reading */
 .markdown-view {
-    padding: 40px;
-    font-size: 15px;
-    line-height: 1.7;
+    padding-left: 1cm;
+    padding-right: 1cm;
+    font-size: 1em;
+    line-height: 1.2;
 }
 
-.markdown-view text {
-    /* max reading width feel — use margins not max-width */
+.empty-state {
+    padding: 1cm;
 }
 
-/* Code block background adapts to dark/light */
-@define-color code-bg-light #f6f8fa;
-@define-color code-bg-dark  #1e1e1e;
+.empty-state-label {
+    font-size: 24px;
+    font-weight: bold;
+}
+
+.shortcut-label {
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: monospace;
+}

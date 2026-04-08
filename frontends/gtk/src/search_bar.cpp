@@ -1,20 +1,18 @@
 #include "search_bar.hpp"
 
-SearchBar::SearchBar()
-    : Gtk::SearchBar(),
-      m_search_entry(Gtk::make_managed<Gtk::SearchEntry>()),
-      m_buffer(nullptr),
-      m_current_match_index(-1),
-      m_total_matches(0),
-      m_has_matches(false) {
-    auto box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
+SearchBar::SearchBar() :
+    m_search_entry(Gtk::make_managed<Gtk::SearchEntry>()), m_buffer(nullptr), m_current_match_index(-1),
+    m_total_matches(0) {
+    const auto box = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
     box->append(*m_search_entry);
 
-    auto match_label = Gtk::make_managed<Gtk::Label>("");
+    const auto match_label = Gtk::make_managed<Gtk::Label>("");
     match_label->add_css_class("dim-label");
     box->append(*match_label);
 
     set_child(*box);
+
+    connect_entry(*m_search_entry);
 
     m_search_entry->signal_search_changed().connect([this]() { on_search_changed(); });
     m_search_entry->signal_next_match().connect([this]() { find_next(); });
@@ -24,13 +22,10 @@ SearchBar::SearchBar()
 
 SearchBar::~SearchBar() = default;
 
-void SearchBar::set_buffer(Glib::RefPtr<Gtk::TextBuffer> buffer) {
-    m_buffer = std::move(buffer);
-}
+void SearchBar::set_buffer(Glib::RefPtr<Gtk::TextBuffer> buffer) { m_buffer = std::move(buffer); }
 
 void SearchBar::on_search_changed() {
-    Glib::ustring text = m_search_entry->get_text();
-    if (text.empty()) {
+    if (const Glib::ustring text = m_search_entry->get_text(); text.empty()) {
         clear_highlights();
         return;
     }
@@ -41,7 +36,7 @@ void SearchBar::on_search_changed() {
 void SearchBar::update_matches() {
     clear_highlights();
 
-    Glib::ustring text = m_search_entry->get_text();
+    const Glib::ustring text = m_search_entry->get_text();
     if (!m_buffer || text.empty()) {
         m_has_matches = false;
         m_matches.clear();
@@ -69,9 +64,8 @@ void SearchBar::update_matches() {
     if (m_has_matches) {
         m_current_match_index = 0;
 
-        auto tag = m_buffer->get_tag_table()->lookup("search_highlight");
-        if (tag) {
-            Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[0]);
+        if (const auto tag = m_buffer->get_tag_table()->lookup("search_highlight")) {
+            const Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[0]);
             Gtk::TextIter end_iter = start_iter;
             end_iter.forward_chars(text.length());
             m_buffer->apply_tag(tag, start_iter, end_iter);
@@ -80,17 +74,20 @@ void SearchBar::update_matches() {
 }
 
 void SearchBar::update_match_count() {
-    auto box = dynamic_cast<Gtk::Box*>(get_child());
-    if (!box) return;
+    const auto box = dynamic_cast<Gtk::Box *>(get_child());
+    if (!box)
+        return;
 
-    auto children = box->get_children();
-    if (children.size() < 2) return;
+    const auto children = box->get_children();
+    if (children.size() < 2)
+        return;
 
-    auto match_label = dynamic_cast<Gtk::Label*>(children[1]);
-    if (!match_label) return;
+    const auto match_label = dynamic_cast<Gtk::Label *>(children[1]);
+    if (!match_label)
+        return;
 
     if (m_total_matches > 0 && m_current_match_index >= 0) {
-        Glib::ustring count_text = Glib::ustring::format(m_current_match_index + 1, " / ", m_total_matches);
+        const Glib::ustring count_text = Glib::ustring::format(m_current_match_index + 1, " / ", m_total_matches);
         match_label->set_text(count_text);
         match_label->set_visible(true);
     } else {
@@ -99,22 +96,25 @@ void SearchBar::update_match_count() {
     }
 }
 
-void SearchBar::scroll_to_match() {
-    if (m_current_match_index < 0 || m_matches.empty()) return;
+void SearchBar::scroll_to_match() const {
+    if (m_current_match_index < 0 || m_matches.empty())
+        return;
 
-    if (!m_buffer) return;
+    if (!m_buffer)
+        return;
 
-    Gtk::TextIter iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
+    const Gtk::TextIter iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
     m_buffer->place_cursor(iter);
 }
 
 void SearchBar::find_next() {
-    if (!m_has_matches || m_matches.empty()) return;
+    if (!m_has_matches || m_matches.empty())
+        return;
 
     if (m_current_match_index < 0) {
         m_current_match_index = 0;
     } else if (m_current_match_index >= m_total_matches - 1) {
-        m_current_match_index = 0;  // Wrap to first
+        m_current_match_index = 0; // Wrap to first
     } else {
         m_current_match_index++;
     }
@@ -126,7 +126,7 @@ void SearchBar::find_next() {
 
     tag = m_buffer->get_tag_table()->lookup("search_highlight");
     if (tag && m_current_match_index >= 0) {
-        Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
+        const Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
         Gtk::TextIter end_iter = start_iter;
         end_iter.forward_chars(m_search_entry->get_text().length());
         m_buffer->apply_tag(tag, start_iter, end_iter);
@@ -137,12 +137,13 @@ void SearchBar::find_next() {
 }
 
 void SearchBar::find_previous() {
-    if (!m_has_matches || m_matches.empty()) return;
+    if (!m_has_matches || m_matches.empty())
+        return;
 
     if (m_current_match_index < 0) {
         m_current_match_index = m_total_matches - 1;
     } else if (m_current_match_index <= 0) {
-        m_current_match_index = m_total_matches - 1;  // Wrap to last
+        m_current_match_index = m_total_matches - 1; // Wrap to last
     } else {
         m_current_match_index--;
     }
@@ -154,7 +155,7 @@ void SearchBar::find_previous() {
 
     tag = m_buffer->get_tag_table()->lookup("search_highlight");
     if (tag && m_current_match_index >= 0) {
-        Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
+        const Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
         Gtk::TextIter end_iter = start_iter;
         end_iter.forward_chars(m_search_entry->get_text().length());
         m_buffer->apply_tag(tag, start_iter, end_iter);
@@ -165,8 +166,7 @@ void SearchBar::find_previous() {
 }
 
 void SearchBar::clear_highlights() {
-    auto tag = m_buffer->get_tag_table()->lookup("search_highlight");
-    if (tag) {
+    if (const auto tag = m_buffer->get_tag_table()->lookup("search_highlight")) {
         m_buffer->remove_tag(tag, m_buffer->begin(), m_buffer->end());
     }
     m_matches.clear();

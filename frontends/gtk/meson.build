@@ -1,9 +1,8 @@
 # 4.12: first release with Gdk::Graphene wrappers, Snapshot::translate and Widget::compute_bounds
 gtkmm    = dependency('gtkmm-4.0', version: '>= 4.12')
-adwaita  = dependency('libadwaita-1', required: get_option('adwaita'))
+adwaita  = dependency('libadwaita-1', required: (frontend == 'adwaita'))
 
 deps = [gtkmm, mdview_core_dep]
-
 if adwaita.found()
   deps += adwaita
 endif
@@ -17,20 +16,23 @@ resources = gnome.compile_resources(
 )
 
 includes = include_directories('include', '.')
-
 sources = files(
   'src/main.cpp',
   'src/app.cpp',
   'src/main_window.cpp',
   'src/markdown_view.cpp',
   'src/search_bar.cpp',
+  'src/smooth_scrolled_window.cpp',
 )
 
 executable('mdview',
-  [sources,resources],
+  [sources, resources],
   include_directories: [includes],
   dependencies: deps,
-  install: true
+  install: true,
+  # If the dependency was found (which happens when frontend == 'adwaita'),
+  # define the macro for the C++ code.
+  cpp_args: (frontend == 'adwaita') ? ['-DUSE_ADWAITA'] : []
 )
 
 # Install desktop file (absolute Exec for the configured prefix)

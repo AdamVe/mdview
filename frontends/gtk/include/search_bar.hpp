@@ -15,11 +15,11 @@ private:
     void on_search_changed();
     void update_matches();
     void update_match_count();
-    void scroll_to_match();
+    void scroll_to_match() const;
 
-    Gtk::SearchEntry* m_search_entry;
+    Gtk::SearchEntry *m_search_entry;
     Glib::RefPtr<Gtk::TextBuffer> m_buffer;
-    std::vector<int> m_matches;  // Store offsets instead of iterators
+    std::vector<int> m_matches; // Store offsets instead of iterators
     int m_current_match_index;
     int m_total_matches;
     bool m_has_matches = false;

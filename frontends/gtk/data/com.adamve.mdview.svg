@@ -4,25 +4,19 @@
   <rect width="512" height="512" fill="#4A90D8" rx="64"/>
 
   <!-- Document shape -->
-  <path d="M144 112 L368 112 L368 400 L144 400 Z" fill="#FFFFFF" rx="8"/>
+  <path d="M144 112 L368 112 L368 400 L144 400 Z" fill="#FFFFFF" />
 
   <!-- Markdown-style text lines -->
-  <rect x="176" y="152" width="224" height="16" rx="4" fill="#333333"/>
-  <rect x="176" y="184" width="192" height="16" rx="4" fill="#333333"/>
-  <rect x="176" y="216" width="240" height="16" rx="4" fill="#333333"/>
-  <rect x="176" y="248" width="176" height="16" rx="4" fill="#333333"/>
-
-  <!-- Hash symbol for markdown -->
-  <rect x="144" y="152" width="16" height="16" rx="2" fill="#4A90D8"/>
-  <rect x="160" y="158" width="16" height="4" rx="2" fill="#4A90D8"/>
-  <rect x="144" y="172" width="16" height="16" rx="2" fill="#4A90D8"/>
-  <rect x="160" y="178" width="16" height="4" rx="2" fill="#4A90D8"/>
+  <rect x="176" y="152" width="180" height="16" rx="4" fill="#333333"/>
+  <rect x="176" y="184" width="160" height="16" rx="4" fill="#333333"/>
+  <rect x="176" y="216" width="145" height="16" rx="4" fill="#333333"/>
+  <rect x="176" y="248" width="160" height="16" rx="4" fill="#333333"/>
 
   <!-- Code blocks -->
-  <rect x="176" y="288" width="224" height="80" rx="4" fill="#F5F5F5" stroke="#E0E0E0" stroke-width="2"/>
-  <rect x="184" y="296" width="208" height="12" rx="2" fill="#CCCCCC"/>
-  <rect x="184" y="316" width="192" height="12" rx="2" fill="#CCCCCC"/>
-  <rect x="184" y="336" width="208" height="12" rx="2" fill="#CCCCCC"/>
+  <rect x="176" y="288" width="160" height="80" rx="4" fill="#F5F5F5" stroke="#E0E0E0" stroke-width="2"/>
+  <rect x="184" y="296" width="145" height="12" rx="2" fill="#CCCCCC"/>
+  <rect x="184" y="316" width="145" height="12" rx="2" fill="#CCCCCC"/>
+  <rect x="184" y="336" width="145" height="12" rx="2" fill="#CCCCCC"/>
 
   <!-- Angle brackets for code -->
   <path d="M144 288 L160 328 L144 368 Z" fill="#4A90D8"/>

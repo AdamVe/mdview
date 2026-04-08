@@ -10,20 +10,19 @@ project('mdview', 'cpp', 'c',
 # single source of truth for the version shown in the About dialog
 add_project_arguments('-DMDVIEW_VERSION="@0@"'.format(meson.project_version()), language: 'cpp')
 
-# Phase 1: Build test_parser - a CLI tool to test the core parser
-# The GTK frontend will be added in Phase 2
-enable_gtk = get_option('enable_gtk')
+frontend = get_option('frontend')
+host_system = host_machine.system()
 
-# Add preprocessor argument before any targets are declared
-# This must come before subdir('core') which creates targets
-if enable_gtk.enabled()
-  add_project_arguments('-DUSE_ADWAITA', language: 'cpp')
+if host_system == 'darwin' or host_system == 'windows'
+  if frontend == 'adwaita'
+    error('The "adwaita" frontend is only supported on Linux.')
+  endif
 endif
 
-# Always set up core first (for the parser library)
+use_adwaita = (frontend == 'adwaita')
+
 subdir('core')
 
-# Add GTK frontend
-if enable_gtk.enabled()
+if frontend == 'gtk' or frontend == 'adwaita'
   subdir('frontends/gtk')
 endif
