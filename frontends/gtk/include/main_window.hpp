@@ -3,6 +3,8 @@
 #include "markdown_view.hpp"
 #include "search_bar.hpp"
 
+class SmoothScrolledWindow;
+
 class App;
 
 class MainWindow : public Gtk::ApplicationWindow {
@@ -20,20 +22,24 @@ public:
 private:
     void setup_actions();
     void on_open_file();
-    void on_style_changed() const;
+    void on_style_changed();
 
     Glib::RefPtr<App> m_app;
+
+    // Owned widgets (created via Gtk::make_managed, ref-counted by GTK tree)
     MarkdownView *m_markdown_view;
     SearchBar *m_search_bar;
+    SmoothScrolledWindow *m_content_scrolled_window;
+    Gtk::Button *m_open_button;
+    Gtk::MenuButton *m_menu_button;
+
+    // Builder-extracted widgets (owned by UI tree)
     Gtk::Box *m_content_box;
     Gtk::Box *m_empty_state_box{};
     Gtk::HeaderBar *m_header_bar;
     Gtk::Stack *m_main_stack{};
-    Gtk::ScrolledWindow *m_content_scrolled_window{};
-    Gtk::Button *m_open_button{};
-    Gtk::MenuButton *m_menu_button{};
+
     Glib::RefPtr<Gtk::FileDialog> m_file_dialog;
-    Glib::RefPtr<Gtk::Filter> m_file_filter;
 
     std::vector<sigc::connection> m_connections;
 };

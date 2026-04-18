@@ -16,6 +16,7 @@ private:
     void update_matches();
     void update_match_count();
     void scroll_to_match() const;
+    void clear_current_highlight() const;
 
     Gtk::SearchEntry *m_search_entry;
     Glib::RefPtr<Gtk::TextBuffer> m_buffer;

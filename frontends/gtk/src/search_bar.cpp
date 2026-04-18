@@ -1,4 +1,5 @@
 #include "search_bar.hpp"
+#include <format>
 
 SearchBar::SearchBar() :
     m_search_entry(Gtk::make_managed<Gtk::SearchEntry>()), m_buffer(nullptr), m_current_match_index(-1),
@@ -87,7 +88,7 @@ void SearchBar::update_match_count() {
         return;
 
     if (m_total_matches > 0 && m_current_match_index >= 0) {
-        const Glib::ustring count_text = Glib::ustring::format(m_current_match_index + 1, " / ", m_total_matches);
+        const std::string count_text = std::format("{} / {}", m_current_match_index + 1, m_total_matches);
         match_label->set_text(count_text);
         match_label->set_visible(true);
     } else {
@@ -119,17 +120,15 @@ void SearchBar::find_next() {
         m_current_match_index++;
     }
 
-    auto tag = m_buffer->get_tag_table()->lookup("search_highlight");
-    if (tag) {
-        m_buffer->remove_tag(tag, m_buffer->begin(), m_buffer->end());
-    }
+    clear_current_highlight();
 
-    tag = m_buffer->get_tag_table()->lookup("search_highlight");
-    if (tag && m_current_match_index >= 0) {
-        const Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
-        Gtk::TextIter end_iter = start_iter;
-        end_iter.forward_chars(m_search_entry->get_text().length());
-        m_buffer->apply_tag(tag, start_iter, end_iter);
+    if (const auto tag = m_buffer->get_tag_table()->lookup("search_highlight")) {
+        if (m_current_match_index >= 0) {
+            const Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
+            Gtk::TextIter end_iter = start_iter;
+            end_iter.forward_chars(m_search_entry->get_text().length());
+            m_buffer->apply_tag(tag, start_iter, end_iter);
+        }
     }
 
     update_match_count();
@@ -148,21 +147,25 @@ void SearchBar::find_previous() {
         m_current_match_index--;
     }
 
-    auto tag = m_buffer->get_tag_table()->lookup("search_highlight");
-    if (tag) {
-        m_buffer->remove_tag(tag, m_buffer->begin(), m_buffer->end());
-    }
+    clear_current_highlight();
 
-    tag = m_buffer->get_tag_table()->lookup("search_highlight");
-    if (tag && m_current_match_index >= 0) {
-        const Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
-        Gtk::TextIter end_iter = start_iter;
-        end_iter.forward_chars(m_search_entry->get_text().length());
-        m_buffer->apply_tag(tag, start_iter, end_iter);
+    if (const auto tag = m_buffer->get_tag_table()->lookup("search_highlight")) {
+        if (m_current_match_index >= 0) {
+            const Gtk::TextIter start_iter = m_buffer->get_iter_at_offset(m_matches[m_current_match_index]);
+            Gtk::TextIter end_iter = start_iter;
+            end_iter.forward_chars(m_search_entry->get_text().length());
+            m_buffer->apply_tag(tag, start_iter, end_iter);
+        }
     }
 
     update_match_count();
     scroll_to_match();
+}
+
+void SearchBar::clear_current_highlight() const {
+    if (const auto tag = m_buffer->get_tag_table()->lookup("search_highlight")) {
+        m_buffer->remove_tag(tag, m_buffer->begin(), m_buffer->end());
+    }
 }
 
 void SearchBar::clear_highlights() {

@@ -1,9 +1,10 @@
 #pragma once
+#include <expected>
 #include <string>
 #include "doc_model.hpp"
 
 namespace mdview {
 
-    [[nodiscard]] DocModel parse_markdown(const std::string &markdown_text);
+    [[nodiscard]] std::expected<DocModel, ParserError> parse_markdown(const std::string &markdown_text);
 
 } // namespace mdview

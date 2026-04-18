@@ -1,7 +1,7 @@
 project('mdview', 'cpp', 'c',
   version: '0.1.0-dev.0',
   default_options: [
-    'cpp_std=c++20',
+    'cpp_std=c++26',
     'warning_level=2',
     'buildtype=debugoptimized'
   ]

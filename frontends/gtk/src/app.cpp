@@ -1,5 +1,4 @@
 #include "app.hpp"
-#include <memory>
 
 App::App() : Application("com.adamve.mdview") {
     g_application_set_flags(G_APPLICATION(gobj()), static_cast<GApplicationFlags>(G_APPLICATION_HANDLES_OPEN | G_APPLICATION_NON_UNIQUE));
@@ -7,7 +6,9 @@ App::App() : Application("com.adamve.mdview") {
 
 App::~App() = default;
 
-Glib::RefPtr<App> App::create() { return std::make_shared<App>(); }
+Glib::RefPtr<App> App::create() {
+    return std::make_shared<App>();
+}
 
 MainWindow *App::create_window() {
     const auto builder = Gtk::Builder::create_from_resource("/com/adamve/mdview/mdview.ui");

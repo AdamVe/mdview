@@ -24,14 +24,16 @@ namespace {
 
 MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &builder,
                        const Glib::RefPtr<App> &app) :
-    ApplicationWindow(cobject), m_app(app), m_markdown_view(nullptr), m_search_bar(nullptr), m_content_box(nullptr),
-    m_header_bar(nullptr), m_file_dialog(nullptr) {
+    ApplicationWindow(cobject), m_app(app), m_content_box(nullptr), m_header_bar(nullptr),
+    m_file_dialog(nullptr) {
 
     set_title("mdview");
 
-    // Get widgets from builder
+    // Get widgets from builder (owned by UI tree, kept as raw pointers)
     m_content_box = builder->get_widget<Gtk::Box>("content_box");
     m_main_stack = builder->get_widget<Gtk::Stack>("main_stack");
+
+    // Owned widgets created via make_managed (ref-counted, managed by GTK tree)
     m_content_scrolled_window = Gtk::make_managed<SmoothScrolledWindow>();
     m_content_scrolled_window->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
     m_content_scrolled_window->set_vexpand(true);
@@ -132,7 +134,7 @@ void MainWindow::on_open_file() {
 void MainWindow::open_file(const Glib::ustring &path) {
     m_markdown_view->load_file(path);
     set_title(Glib::ustring("mdview - ") + Glib::path_get_basename(path.c_str()));
-    if (m_content_scrolled_window && m_main_stack) {
+    if (m_main_stack) {
         m_main_stack->set_visible_child(*m_content_scrolled_window);
     }
 }
@@ -148,7 +150,9 @@ void MainWindow::find_next() const { m_search_bar->find_next(); }
 
 void MainWindow::find_previous() const { m_search_bar->find_previous(); }
 
-void MainWindow::on_style_changed() const { m_markdown_view->update_colors(); }
+void MainWindow::on_style_changed() {
+    m_markdown_view->update_colors();
+}
 
 void MainWindow::show_about() {
 #ifdef USE_ADWAITA

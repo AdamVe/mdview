@@ -1,109 +1,136 @@
 #include "mdview/parser.hpp"
 #include <cmark-gfm.h>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace mdview {
 
-    static std::vector<InlineNode> parse_inline_node(cmark_node *node);
-    static std::vector<InlineNode> parse_inline_children(cmark_node *node);
-    static DocNode parse_block_node(cmark_node *node);
-    static std::vector<DocNode> parse_document(cmark_node *root);
+    // Forward declarations
+    static std::expected<std::vector<InlineNode>, ParserError> parse_inline_node(cmark_node *node);
+    static std::expected<std::vector<InlineNode>, ParserError> parse_inline_children(cmark_node *node);
+    static std::expected<DocNode, ParserError> parse_block_node(cmark_node *node);
+    static std::expected<std::vector<DocNode>, ParserError> parse_document(cmark_node *root);
 
-    static std::string get_literal(cmark_node *node) {
+    // Get literal as string_view - points directly to cmark's internal storage
+    static std::string_view get_literal(cmark_node *node) {
         const char *text = cmark_node_get_literal(node);
-        return text ? std::string(text) : std::string();
+        return text ? std::string_view(text) : std::string_view();
     }
 
-    static std::vector<InlineNode> parse_inline_node(cmark_node *node) {
+    // Parse a single inline node (text, code, emphasis, strong, link)
+    static std::expected<std::vector<InlineNode>, ParserError> parse_inline_node(cmark_node *node) {
         switch (cmark_node_get_type(node)) {
             case CMARK_NODE_TEXT: {
                 TextRun run;
-                run.text = get_literal(node);
-                return {run};
+                run.text = std::string(get_literal(node));  // Allocate: text may be transient
+                return std::vector<InlineNode>{run};
             }
 
             case CMARK_NODE_CODE: {
                 TextRun run;
-                run.text = get_literal(node);
+                run.text = std::string(get_literal(node));  // Allocate
                 run.code = true;
-                return {run};
+                return std::vector<InlineNode>{run};
             }
 
             case CMARK_NODE_EMPH: {
-                std::vector<InlineNode> children = parse_inline_children(node);
-                for (auto &child: children) {
+                auto children_result = parse_inline_children(node);
+                if (!children_result) {
+                    return std::unexpected(children_result.error());
+                }
+                auto &children = *children_result;
+                for (auto &child : children) {
                     std::visit(
-                            [&]<typename T>(T &c) {
-                                if constexpr (std::is_same_v<std::decay_t<T>, TextRun>) {
-                                    c.italic = true;
-                                }
-                            },
-                            child);
+                        [&]<typename T>(T &c) {
+                            if constexpr (std::is_same_v<std::decay_t<T>, TextRun>) {
+                                c.italic = true;
+                            }
+                        },
+                        child);
                 }
                 return children;
             }
 
             case CMARK_NODE_STRONG: {
-                std::vector<InlineNode> children = parse_inline_children(node);
-                for (auto &child: children) {
+                auto children_result = parse_inline_children(node);
+                if (!children_result) {
+                    return std::unexpected(children_result.error());
+                }
+                auto &children = *children_result;
+                for (auto &child : children) {
                     std::visit(
-                            [&]<typename T>(T &c) {
-                                if constexpr (std::is_same_v<std::decay_t<T>, TextRun>) {
-                                    c.bold = true;
-                                }
-                            },
-                            child);
+                        [&]<typename T>(T &c) {
+                            if constexpr (std::is_same_v<std::decay_t<T>, TextRun>) {
+                                c.bold = true;
+                            }
+                        },
+                        child);
                 }
                 return children;
             }
 
             case CMARK_NODE_LINK: {
+                auto children_result = parse_inline_children(node);
+                if (!children_result) {
+                    return std::unexpected(children_result.error());
+                }
+                auto &children = *children_result;
+
                 Link link;
-                if (const std::vector<InlineNode> children = parse_inline_children(node);
-                    children.size() == 1 && std::holds_alternative<TextRun>(children[0])) {
-                    link.text = std::get<TextRun>(children[0]).text;
+                if (children.size() == 1 && std::holds_alternative<TextRun>(children[0])) {
+                    link.text = std::get<TextRun>(children[0]).text;  // Copy
                 } else {
                     std::string text;
-                    for (const auto &child: children) {
+                    for (const auto &child : children) {
                         std::visit(
-                                [&]<typename T>(const T &c) {
-                                    if constexpr (std::is_same_v<std::decay_t<T>, TextRun>) {
-                                        text += c.text;
-                                    }
-                                },
-                                child);
+                            [&]<typename T>(const T &c) {
+                                if constexpr (std::is_same_v<std::decay_t<T>, TextRun>) {
+                                    text += c.text;
+                                }
+                            },
+                            child);
                     }
-                    link.text = text;
+                    link.text = std::move(text);  // Move
                 }
+
                 const char *url = cmark_node_get_url(node);
-                link.url = url ? std::string(url) : std::string();
-                return {link};
+                link.url = url ? std::string(url) : std::string();  // Allocate URL
+                return std::vector<InlineNode>{link};
             }
 
             case CMARK_NODE_IMAGE:
             case CMARK_NODE_HTML_INLINE:
             default: {
                 TextRun run;
-                run.text = get_literal(node);
-                return {run};
+                run.text = std::string(get_literal(node));  // Allocate
+                return std::vector<InlineNode>{run};
             }
         }
     }
 
-    static std::vector<InlineNode> parse_inline_children(cmark_node *node) {
+    // Parse all inline children of a node
+    static std::expected<std::vector<InlineNode>, ParserError> parse_inline_children(cmark_node *node) {
         std::vector<InlineNode> result;
         cmark_node *child = cmark_node_first_child(node);
+
         while (child) {
-            std::vector<InlineNode> inl = parse_inline_node(child);
-            for (auto &inline_node: inl) {
+            auto inl_result = parse_inline_node(child);
+            if (!inl_result) {
+                return std::unexpected(inl_result.error());
+            }
+
+            auto &inl = *inl_result;
+            for (auto &inline_node : inl) {
                 if (!result.empty() && std::holds_alternative<TextRun>(inline_node)) {
                     const TextRun &new_run = std::get<TextRun>(inline_node);
                     if (std::holds_alternative<TextRun>(result.back())) {
                         auto &last_run = std::get<TextRun>(result.back());
-                        if (last_run.bold == new_run.bold && last_run.italic == new_run.italic &&
-                            last_run.code == new_run.code && last_run.strikethrough == new_run.strikethrough) {
-                            last_run.text += new_run.text;
+                        if (last_run.bold == new_run.bold &&
+                            last_run.italic == new_run.italic &&
+                            last_run.code == new_run.code &&
+                            last_run.strikethrough == new_run.strikethrough) {
+                            last_run.text += new_run.text;  // Concatenate adjacent runs
                             continue;
                         }
                     }
@@ -117,20 +144,22 @@ namespace mdview {
         return result;
     }
 
+    // Get paragraph text for task list detection (concatenates all text nodes)
     static std::string get_paragraph_text(cmark_node *node) {
         std::string result;
         cmark_node *child = cmark_node_first_child(node);
+
         while (child) {
             if (cmark_node_get_type(child) == CMARK_NODE_TEXT) {
-                if (const char *text = cmark_node_get_literal(child)) {
-                    result += text;
-                }
+                std::string_view text = get_literal(child);
+                result.append(text.data(), text.size());
             }
             child = cmark_node_next(child);
         }
         return result;
     }
 
+    // Check if a node is a task list item and extract completion status
     static bool is_task_list_item(cmark_node *node, bool &completed) {
         cmark_node *first_child = cmark_node_first_child(node);
         if (!first_child || cmark_node_get_type(first_child) != CMARK_NODE_PARAGRAPH) {
@@ -149,18 +178,27 @@ namespace mdview {
         return false;
     }
 
-    static DocNode parse_block_node(cmark_node *node) {
+    // Parse a single block node (heading, paragraph, code block, etc.)
+    static std::expected<DocNode, ParserError> parse_block_node(cmark_node *node) {
         switch (cmark_node_get_type(node)) {
             case CMARK_NODE_HEADING: {
                 Heading heading;
                 heading.level = cmark_node_get_heading_level(node);
-                heading.content = parse_inline_children(node);
+                auto content_result = parse_inline_children(node);
+                if (!content_result) {
+                    return std::unexpected(content_result.error());
+                }
+                heading.content = std::move(*content_result);
                 return heading;
             }
 
             case CMARK_NODE_PARAGRAPH: {
                 Paragraph para;
-                para.content = parse_inline_children(node);
+                auto content_result = parse_inline_children(node);
+                if (!content_result) {
+                    return std::unexpected(content_result.error());
+                }
+                para.content = std::move(*content_result);
                 return para;
             }
 
@@ -168,16 +206,18 @@ namespace mdview {
                 CodeBlock code_block;
                 const char *lang = cmark_node_get_fence_info(node);
                 code_block.language = lang ? std::string(lang) : std::string();
-                code_block.code = get_literal(node);
+                code_block.code = std::string(get_literal(node));  // Allocate code content
                 return code_block;
             }
 
             case CMARK_NODE_BLOCK_QUOTE: {
                 BlockQuote bq;
-                // BLOCK_QUOTE contains one or more block nodes (usually paragraphs)
-                // We need to get the inline content from the first child paragraph
                 if (cmark_node *first_child = cmark_node_first_child(node)) {
-                    bq.content = parse_inline_children(first_child);
+                    auto content_result = parse_inline_children(first_child);
+                    if (!content_result) {
+                        return std::unexpected(content_result.error());
+                    }
+                    bq.content = std::move(*content_result);
                 }
                 return bq;
             }
@@ -188,6 +228,7 @@ namespace mdview {
 
             case CMARK_NODE_LIST: {
                 cmark_list_type list_type = cmark_node_get_list_type(node);
+
                 if (list_type == CMARK_BULLET_LIST) {
                     cmark_node *first_item = cmark_node_first_child(node);
                     bool is_task_list = false;
@@ -199,12 +240,14 @@ namespace mdview {
                     if (is_task_list) {
                         TaskList tlist;
                         cmark_node *item = cmark_node_first_child(node);
+
                         while (item) {
                             bool completed;
                             if (is_task_list_item(item, completed)) {
                                 std::vector<InlineNode> item_content;
                                 cmark_node *inner = cmark_node_first_child(item);
                                 int skipped = 0;
+
                                 while (inner && skipped < 2) {
                                     cmark_node_type t = cmark_node_get_type(inner);
                                     if (t == CMARK_NODE_TEXT || t == CMARK_NODE_EMPH || t == CMARK_NODE_STRONG) {
@@ -212,9 +255,14 @@ namespace mdview {
                                     }
                                     inner = cmark_node_next(inner);
                                 }
+
                                 while (inner) {
                                     if (cmark_node_get_type(inner) == CMARK_NODE_PARAGRAPH) {
-                                        item_content = parse_inline_children(inner);
+                                        auto content_result = parse_inline_children(inner);
+                                        if (!content_result) {
+                                            return std::unexpected(content_result.error());
+                                        }
+                                        item_content = std::move(*content_result);
                                         break;
                                     }
                                     inner = cmark_node_next(inner);
@@ -223,9 +271,14 @@ namespace mdview {
                             } else {
                                 std::vector<InlineNode> item_content;
                                 cmark_node *inner = cmark_node_first_child(item);
+
                                 while (inner) {
                                     if (cmark_node_get_type(inner) == CMARK_NODE_PARAGRAPH) {
-                                        item_content = parse_inline_children(inner);
+                                        auto content_result = parse_inline_children(inner);
+                                        if (!content_result) {
+                                            return std::unexpected(content_result.error());
+                                        }
+                                        item_content = std::move(*content_result);
                                         break;
                                     }
                                     inner = cmark_node_next(inner);
@@ -238,12 +291,18 @@ namespace mdview {
                     } else {
                         BulletList blist;
                         cmark_node *item = cmark_node_first_child(node);
+
                         while (item) {
                             std::vector<InlineNode> item_content;
                             cmark_node *inner = cmark_node_first_child(item);
+
                             while (inner) {
                                 if (cmark_node_get_type(inner) == CMARK_NODE_PARAGRAPH) {
-                                    item_content = parse_inline_children(inner);
+                                    auto content_result = parse_inline_children(inner);
+                                    if (!content_result) {
+                                        return std::unexpected(content_result.error());
+                                    }
+                                    item_content = std::move(*content_result);
                                     break;
                                 }
                                 inner = cmark_node_next(inner);
@@ -256,12 +315,18 @@ namespace mdview {
                 } else if (list_type == CMARK_ORDERED_LIST) {
                     OrderedList olist;
                     cmark_node *item = cmark_node_first_child(node);
+
                     while (item) {
                         std::vector<InlineNode> item_content;
                         cmark_node *inner = cmark_node_first_child(item);
+
                         while (inner) {
                             if (cmark_node_get_type(inner) == CMARK_NODE_PARAGRAPH) {
-                                item_content = parse_inline_children(inner);
+                                auto content_result = parse_inline_children(inner);
+                                if (!content_result) {
+                                    return std::unexpected(content_result.error());
+                                }
+                                item_content = std::move(*content_result);
                                 break;
                             }
                             inner = cmark_node_next(inner);
@@ -271,6 +336,8 @@ namespace mdview {
                     }
                     return olist;
                 }
+
+                // Fallback for unknown list types
                 Paragraph para;
                 return para;
             }
@@ -282,22 +349,32 @@ namespace mdview {
         }
     }
 
-    static std::vector<DocNode> parse_document(cmark_node *root) {
+    // Parse all document nodes
+    static std::expected<std::vector<DocNode>, ParserError> parse_document(cmark_node *root) {
         std::vector<DocNode> result;
         cmark_node *child = cmark_node_first_child(root);
+
         while (child) {
-            DocNode block = parse_block_node(child);
-            result.push_back(std::move(block));
+            auto block_result = parse_block_node(child);
+            if (!block_result) {
+                return std::unexpected(block_result.error());
+            }
+            result.push_back(std::move(*block_result));
             child = cmark_node_next(child);
         }
         return result;
     }
 
-    DocModel parse_markdown(const std::string &markdown_text) {
+    // Top-level parse function
+    std::expected<DocModel, ParserError> parse_markdown(const std::string &markdown_text) {
         cmark_node *root = cmark_parse_document(markdown_text.c_str(), markdown_text.size(), 0);
-        DocModel model = parse_document(root);
+        auto result = parse_document(root);
         cmark_node_free(root);
-        return model;
+
+        if (!result) {
+            return std::unexpected<ParserError>(ParserError::InternalError);
+        }
+        return std::move(*result);
     }
 
 } // namespace mdview

@@ -42,7 +42,18 @@ namespace mdview {
         std::vector<std::vector<InlineNode>> items;
     };
     struct TaskList {
-        std::vector<std::pair<bool, std::vector<InlineNode>>> items;
+        struct Item {
+            bool completed;
+            std::vector<InlineNode> content;
+        };
+        std::vector<Item> items;
+    };
+
+    enum class ParserError {
+        InvalidInput,
+        InternalError,
+        MalformedInline,
+        UnexpectedNode
     };
 
     using DocNode = std::variant<Heading, Paragraph, CodeBlock, BlockQuote, HRule, BulletList, OrderedList, TaskList>;

@@ -165,20 +165,15 @@ void MarkdownView::insert_node(const mdview::CodeBlock &cb, Gtk::TextIter &iter)
     const auto tag = m_tag_table->lookup("code_block");
 
     if (!cb.language.empty()) {
-        iter = m_buffer->insert(iter, cb.language);
-        iter = m_buffer->insert(iter, "\n");
         if (const auto lang_tag = m_tag_table->lookup("inline_code")) {
-            auto end = iter;
-            end.backward_chars(cb.language.length() + 1);
-            m_buffer->apply_tag(lang_tag, end, iter);
-            iter = end;
+            iter = m_buffer->insert_with_tags(iter, Glib::ustring(cb.language), {lang_tag});
+        } else {
+            iter = m_buffer->insert(iter, cb.language);
         }
+        iter = m_buffer->insert(iter, "\n");
     }
 
-    iter = m_buffer->insert(iter, cb.code);
-    auto end = iter;
-    end.backward_chars(cb.code.length());
-    m_buffer->apply_tag(tag, end, iter);
+    iter = m_buffer->insert_with_tags(iter, Glib::ustring(cb.code), {tag});
     iter = m_buffer->insert(iter, "\n");
     iter = m_buffer->insert(iter, "\n");
 }
@@ -194,10 +189,7 @@ void MarkdownView::insert_node(const mdview::BlockQuote &bq, Gtk::TextIter &iter
 
 void MarkdownView::insert_node(const mdview::HRule & /*hr*/, Gtk::TextIter &iter) const {
     const auto tag = m_tag_table->lookup("hr");
-    iter = m_buffer->insert(iter, "— — —");
-    auto end = iter;
-    end.backward_chars(5); // "— — —" is 5 characters
-    m_buffer->apply_tag(tag, end, iter);
+    iter = m_buffer->insert_with_tags(iter, Glib::ustring("— — —"), {tag});
     iter = m_buffer->insert(iter, "\n");
 }
 
@@ -205,10 +197,7 @@ void MarkdownView::insert_node(const mdview::BulletList &bl, Gtk::TextIter &iter
     const auto tag = m_tag_table->lookup("bullet");
 
     for (const auto &item: bl.items) {
-        iter = m_buffer->insert(iter, "• ");
-        auto end = iter;
-        end.backward_chars(2); // "• " is 2 characters
-        m_buffer->apply_tag(tag, end, iter);
+        iter = m_buffer->insert_with_tags(iter, Glib::ustring("• "), {tag});
 
         for (const auto &inline_node: item) {
             std::visit([this, &iter, &tag](const auto &inl) { insert_inline(inl, iter, tag); }, inline_node);
@@ -233,13 +222,13 @@ void MarkdownView::insert_node(const mdview::OrderedList &ol, Gtk::TextIter &ite
 }
 
 void MarkdownView::insert_node(const mdview::TaskList &tl, Gtk::TextIter &iter) {
-    for (const auto &[fst, snd]: tl.items) {
-        const char marker = fst ? 'x' : ' ';
+    for (const auto &item : tl.items) {
+        const char marker = item.completed ? 'x' : ' ';
         iter = m_buffer->insert(iter, "[");
         iter = m_buffer->insert(iter, Glib::ustring(1, marker));
         iter = m_buffer->insert(iter, "] ");
 
-        for (const auto &inline_node: snd) {
+        for (const auto &inline_node : item.content) {
             std::visit([this, &iter](const auto &inl) { insert_inline(inl, iter); }, inline_node);
         }
         iter = m_buffer->insert(iter, "\n");
@@ -248,44 +237,28 @@ void MarkdownView::insert_node(const mdview::TaskList &tl, Gtk::TextIter &iter) 
 
 void MarkdownView::insert_inline(const mdview::TextRun &tr, Gtk::TextIter &iter, Glib::RefPtr<Gtk::TextTag> tag) const {
     Glib::ustring text = tr.text;
+    if (text.empty()) return;
 
-    if (tag) {
-        iter = m_buffer->insert(iter, text);
-        auto end = iter;
-        end.backward_chars(text.length());
-        m_buffer->apply_tag(tag, end, iter);
-    } else {
-        iter = m_buffer->insert(iter, text);
-    }
-
-    // Apply inline tags
+    // Collect all applicable tags to apply atomically via insert_with_tags
+    std::vector<Glib::RefPtr<Gtk::TextTag>> tags;
+    if (tag) tags.push_back(tag);
     if (tr.code) {
-        if (auto code_tag = m_tag_table->lookup("inline_code")) {
-            auto end = iter;
-            end.backward_chars(text.length());
-            m_buffer->apply_tag(code_tag, end, iter);
-        }
+        if (auto code_tag = m_tag_table->lookup("inline_code")) tags.push_back(code_tag);
     }
     if (tr.bold) {
-        if (auto bold_tag = m_tag_table->lookup("bold")) {
-            auto end = iter;
-            end.backward_chars(text.length());
-            m_buffer->apply_tag(bold_tag, end, iter);
-        }
+        if (auto bold_tag = m_tag_table->lookup("bold")) tags.push_back(bold_tag);
     }
     if (tr.italic) {
-        if (auto italic_tag = m_tag_table->lookup("italic")) {
-            auto end = iter;
-            end.backward_chars(text.length());
-            m_buffer->apply_tag(italic_tag, end, iter);
-        }
+        if (auto italic_tag = m_tag_table->lookup("italic")) tags.push_back(italic_tag);
     }
     if (tr.strikethrough) {
-        if (auto strike_tag = m_tag_table->lookup("strikethrough")) {
-            auto end = iter;
-            end.backward_chars(text.length());
-            m_buffer->apply_tag(strike_tag, end, iter);
-        }
+        if (auto strike_tag = m_tag_table->lookup("strikethrough")) tags.push_back(strike_tag);
+    }
+
+    if (tags.empty()) {
+        iter = m_buffer->insert(iter, text);
+    } else {
+        iter = m_buffer->insert_with_tags(iter, text, tags);
     }
 }
 
@@ -294,12 +267,21 @@ void MarkdownView::insert_inline(const mdview::Link &l, Gtk::TextIter &iter,
     insert_inline(mdview::TextRun{l.text}, iter, tag);
 }
 
-void MarkdownView::setup_color_detection() { m_dark_mode = false; }
+void MarkdownView::setup_color_detection() {
+    auto settings = Gtk::Settings::get_default();
+    if (settings) {
+        Glib::ustring theme;
+        settings->get_property("gtk-theme-name", theme);
+        m_dark_mode = theme.find("dark") != Glib::ustring::npos ||
+                      theme.find("Dark") != Glib::ustring::npos;
+    }
+}
 
 void MarkdownView::load_file(const Glib::ustring &path) {
     std::ifstream file(path);
     if (!file) {
-        std::cerr << "Error: Cannot open file " << path << std::endl;
+        m_buffer->set_text("Error: Cannot open file\n" + path);
+        m_has_content = false;
         return;
     }
 
@@ -307,8 +289,13 @@ void MarkdownView::load_file(const Glib::ustring &path) {
     buffer << file.rdbuf();
     std::string content = buffer.str();
 
-    mdview::DocModel model = mdview::parse_markdown(content);
-    load(model);
+    auto result = mdview::parse_markdown(content);
+    if (!result) {
+        m_buffer->set_text("Error: Failed to parse markdown document.");
+        m_has_content = false;
+        return;
+    }
+    load(std::move(*result));
 }
 
 void MarkdownView::update_colors() const { update_code_backgrounds(); }
