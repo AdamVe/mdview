@@ -35,7 +35,7 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
 
     // Owned widgets created via make_managed (ref-counted, managed by GTK tree)
     m_content_scrolled_window = Gtk::make_managed<SmoothScrolledWindow>();
-    m_content_scrolled_window->set_policy(Gtk::PolicyType::NEVER, Gtk::PolicyType::AUTOMATIC);
+    m_content_scrolled_window->set_policy(Gtk::PolicyType::AUTOMATIC, Gtk::PolicyType::AUTOMATIC);
     m_content_scrolled_window->set_vexpand(true);
     m_content_scrolled_window->set_hexpand(true);
 

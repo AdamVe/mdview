@@ -29,6 +29,7 @@ private:
     void insert_node(const mdview::BulletList &bl, Gtk::TextIter &iter);
     void insert_node(const mdview::OrderedList &ol, Gtk::TextIter &iter);
     void insert_node(const mdview::TaskList &tl, Gtk::TextIter &iter);
+    void insert_node(const mdview::Table &t, Gtk::TextIter &iter);
 
     void setup_color_detection();
     void update_code_backgrounds() const;

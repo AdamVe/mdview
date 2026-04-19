@@ -48,6 +48,14 @@ namespace mdview {
         };
         std::vector<Item> items;
     };
+    struct TableCell {
+        std::vector<InlineNode> content;
+    };
+    struct Table {
+        std::vector<TableCell> header;
+        std::vector<std::vector<TableCell>> rows;
+        std::vector<char> alignments;
+    };
 
     enum class ParserError {
         InvalidInput,
@@ -56,7 +64,7 @@ namespace mdview {
         UnexpectedNode
     };
 
-    using DocNode = std::variant<Heading, Paragraph, CodeBlock, BlockQuote, HRule, BulletList, OrderedList, TaskList>;
+    using DocNode = std::variant<Heading, Paragraph, CodeBlock, BlockQuote, HRule, BulletList, OrderedList, TaskList, Table>;
 
     using DocModel = std::vector<DocNode>;
 

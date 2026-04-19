@@ -63,6 +63,25 @@ private:
         }
     }
 
+    void print_node(const mdview::Table &t) {
+        std::print("Table with {} columns, {} header rows, {} body rows",
+                   t.alignments.size(), t.header.size(), t.rows.size());
+        for (size_t c = 0; c < t.alignments.size(); ++c) {
+            std::print("\n  col {}: align='{}'", c, t.alignments[c]);
+        }
+        for (size_t r = 0; r < t.header.size(); ++r) {
+            std::print("\n  header[{}]: ", r);
+            print_inline_vector(t.header[r].content);
+        }
+        for (size_t r = 0; r < t.rows.size(); ++r) {
+            std::print("\n  row[{}]: ", r);
+            for (size_t c = 0; c < t.rows[r].size(); ++c) {
+                if (c > 0) std::print(" | ");
+                print_inline_vector(t.rows[r][c].content);
+            }
+        }
+    }
+
     void print_inline_vector(const std::vector<mdview::InlineNode> &nodes) {
         for (const auto &node: nodes) {
             std::visit([this](const auto &n) { print_inline(n); }, node);

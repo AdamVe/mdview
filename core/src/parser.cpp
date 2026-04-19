@@ -1,8 +1,10 @@
 #include "mdview/parser.hpp"
 #include <cmark-gfm.h>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
+#include "cmark-gfm-extension_api.h"
 
 namespace mdview {
 
@@ -180,6 +182,42 @@ namespace mdview {
 
     // Parse a single block node (heading, paragraph, code block, etc.)
     static std::expected<DocNode, ParserError> parse_block_node(cmark_node *node) {
+        // Extension node types have no public enum values; match by type name.
+        if (std::strcmp(cmark_node_get_type_string(node), "table") == 0) {
+            Table table;
+            uint16_t n_columns = cmark_gfm_extensions_get_table_columns(node);
+            uint8_t *alignments = cmark_gfm_extensions_get_table_alignments(node);
+            table.alignments.assign(alignments, alignments + n_columns);
+
+            cmark_node *child = cmark_node_first_child(node);
+            while (child) {
+                const char *row_kind = cmark_node_get_type_string(child);
+                const bool is_header_node = std::strcmp(row_kind, "table_header") == 0;
+                if (is_header_node || std::strcmp(row_kind, "table_row") == 0) {
+                    std::vector<TableCell> row_cells;
+                    cmark_node *cell_child = cmark_node_first_child(child);
+                    while (cell_child) {
+                        if (std::strcmp(cmark_node_get_type_string(cell_child), "table_cell") == 0) {
+                            auto content_result = parse_inline_children(cell_child);
+                            if (!content_result) {
+                                return std::unexpected(content_result.error());
+                            }
+                            row_cells.push_back({std::move(*content_result)});
+                        }
+                        cell_child = cmark_node_next(cell_child);
+                    }
+
+                    if (is_header_node || cmark_gfm_extensions_get_table_row_is_header(child)) {
+                        table.header = std::move(row_cells);
+                    } else {
+                        table.rows.push_back(std::move(row_cells));
+                    }
+                }
+                child = cmark_node_next(child);
+            }
+            return table;
+        }
+
         switch (cmark_node_get_type(node)) {
             case CMARK_NODE_HEADING: {
                 Heading heading;
@@ -367,7 +405,23 @@ namespace mdview {
 
     // Top-level parse function
     std::expected<DocModel, ParserError> parse_markdown(const std::string &markdown_text) {
-        cmark_node *root = cmark_parse_document(markdown_text.c_str(), markdown_text.size(), 0);
+        cmark_gfm_core_extensions_ensure_registered();
+
+        cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+
+        // Attach the GFM extensions we parse for. cmark_parse_document() does
+        // NOT do this — it only knows the built-in CommonMark node types.
+        static constexpr const char *kExtensions[] = {"table", "strikethrough", "tasklist", "autolink", "tagfilter"};
+        for (const char *name: kExtensions) {
+            if (cmark_syntax_extension *ext = cmark_find_syntax_extension(name)) {
+                cmark_parser_attach_syntax_extension(parser, ext);
+            }
+        }
+
+        cmark_parser_feed(parser, markdown_text.c_str(), markdown_text.size());
+        cmark_node *root = cmark_parser_finish(parser);
+        cmark_parser_free(parser);
+
         auto result = parse_document(root);
         cmark_node_free(root);
 

@@ -1,4 +1,5 @@
 #include "markdown_view.hpp"
+#include <cstring>
 #include <fstream>
 #include <gtkmm.h>
 #include <iostream>
@@ -49,7 +50,7 @@ MarkdownView::MarkdownView() {
     set_editable(false);
     set_cursor_visible(false);
 
-    // Enable word wrapping
+    // Enable word wrapping (table_cell tag overrides this to NONE)
     set_wrap_mode(Gtk::WrapMode::WORD_CHAR);
 
     add_css_class("markdown-view");
@@ -71,7 +72,7 @@ void MarkdownView::setup_tags() {
     add_tag("italic", "style=italic;");
     add_tag("strikethrough", "strikethrough=true;");
     add_tag("inline_code", "family=monospace;");
-    add_tag("code_block", "family=monospace;");
+    add_tag("code_block", "family=monospace;line-height=1;");
 
     // Block tags
     add_tag("blockquote", "indent=24;left-margin=24;style=italic;");
@@ -79,6 +80,7 @@ void MarkdownView::setup_tags() {
     add_tag("hr", "");
     add_tag("bullet", "indent=24;left-margin=24;");
     add_tag("search_highlight", "background=yellow;");
+    add_tag("table_cell", "line-height=1;");
 }
 
 void MarkdownView::add_tag(const Glib::ustring &name, const Glib::ustring & /*properties*/) const {
@@ -112,8 +114,14 @@ void MarkdownView::add_tag(const Glib::ustring &name, const Glib::ustring & /*pr
     } else if (name == "code_block") {
         tag->property_family() = "monospace";
         tag->property_left_margin() = 16;
-        tag->property_pixels_above_lines() = 8;
-        tag->property_pixels_below_lines() = 8;
+        tag->property_pixels_above_lines() = 0;
+        tag->property_pixels_below_lines() = 0;
+        tag->property_line_height() = 1.0;
+        tag->property_wrap_mode() = Gtk::WrapMode::NONE;
+    } else if (name == "table_cell") {
+        tag->property_family() = "monospace";
+        tag->property_line_height() = 1.0;
+        tag->property_wrap_mode() = Gtk::WrapMode::NONE;
     } else if (name == "blockquote") {
         tag->property_left_margin() = 24;
         tag->property_indent() = 24;
@@ -235,6 +243,183 @@ void MarkdownView::insert_node(const mdview::TaskList &tl, Gtk::TextIter &iter) 
     }
 }
 
+void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
+    const auto table_cell_tag = m_tag_table->lookup("table_cell");
+
+    // UTF-8 box-drawing constants
+    static constexpr const char *kTopLeft =     "┌";
+    static constexpr const char *kTopRight =    "┐";
+    static constexpr const char *kBottomLeft =  "└";
+    static constexpr const char *kBottomRight = "┘";
+    static constexpr const char *kTJunction =   "┬";
+    static constexpr const char *kPlus =        "┼";
+    static constexpr const char *kBJunction =   "┴";
+    static constexpr const char *kHLine =       "─";
+    static constexpr const char *kVLine =       "│";
+    static constexpr const char *kSepLeft =     "├";
+    static constexpr const char *kSepRight =    "┤";
+
+    // Repeat a UTF-8 string n times
+    auto repeat = [](const char *s, size_t n) -> std::string {
+        std::string result;
+        result.reserve(std::strlen(s) * n);
+        for (size_t i = 0; i < n; ++i) {
+            result += s;
+        }
+        return result;
+    };
+
+    // Extract plain text from inline nodes for width computation
+    auto extract_text = [](const std::vector<mdview::InlineNode> &nodes) -> std::string {
+        std::string result;
+        for (const auto &node : nodes) {
+            std::visit(
+                [&result](const auto &n) {
+                    if constexpr (std::is_same_v<std::decay_t<decltype(n)>, mdview::TextRun>) {
+                        result += n.text;
+                    }
+                },
+                node);
+        }
+        return result;
+    };
+
+   // Display width via Pango: measures actual rendered width in monospace font.
+    // This correctly handles emoji (🖥🗑⭐), symbols (☀♥✔), and CJK characters
+    // that wcwidth miscounts for monospace rendering.
+    auto pango_layout = create_pango_layout("");
+    PangoFontDescription* raw = pango_font_description_new();
+    pango_font_description_set_family(raw, "monospace");
+    pango_font_description_set_size(raw, 12 * PANGO_SCALE);
+    Pango::FontDescription font_desc(raw, false);
+    pango_layout->set_font_description(font_desc);
+
+    // Get monospace character width (baseline)
+    pango_layout->set_text("M");
+    Pango::Rectangle baseline_lr = pango_layout->get_logical_extents();
+    int char_width = baseline_lr.get_width();
+    if (char_width <= 0)
+        char_width = 12;
+
+    // Strip variation selectors (U+FE00–U+FE0F) before measuring
+    auto strip_variation_selectors = [](const std::string &s) -> Glib::ustring {
+        Glib::ustring result;
+        for (gunichar ch : Glib::ustring(s)) {
+            if (ch < 0xFE00 || ch > 0xFE0F)
+                result += ch;
+        }
+        return result;
+    };
+
+    auto display_width = [&](const std::string &s) -> size_t {
+        Glib::ustring cleaned = strip_variation_selectors(s);
+        if (cleaned.empty())
+            return 0;
+        pango_layout->set_text(cleaned);
+        Pango::Rectangle lr = pango_layout->get_logical_extents();
+        int w = lr.get_width();
+        return (w + char_width / 2) / char_width;  // round to nearest
+    };
+
+    // Compute max display width per column
+    std::vector<size_t> col_widths(t.alignments.size(), 0);
+    for (size_t c = 0; c < t.header.size(); ++c) {
+        col_widths[c] = std::max(col_widths[c], display_width(extract_text(t.header[c].content)));
+    }
+    for (const auto &row : t.rows) {
+        for (size_t c = 0; c < col_widths.size() && c < row.size(); ++c) {
+            col_widths[c] = std::max(col_widths[c], display_width(extract_text(row[c].content)));
+        }
+    }
+    for (auto &w : col_widths) {
+        if (w == 0) w = 1;
+    }
+
+    auto write = [&](const Glib::ustring &s) {
+        if (table_cell_tag) {
+            iter = m_buffer->insert_with_tags(iter, s, {table_cell_tag});
+        } else {
+            iter = m_buffer->insert(iter, s);
+        }
+    };
+
+    // Top border
+    write(kTopLeft);
+    for (size_t c = 0; c < col_widths.size(); ++c) {
+        write(Glib::ustring(repeat(kHLine, col_widths[c] + 2)));
+        write(c + 1 < col_widths.size() ? kTJunction : kTopRight);
+    }
+    write("\n");
+
+    // Header row
+    for (size_t c = 0; c < t.header.size() && c < col_widths.size(); ++c) {
+        write(kVLine);
+        std::string text = extract_text(t.header[c].content);
+        char align = t.alignments.size() > c ? t.alignments[c] : 'l';
+        size_t pad = col_widths[c] - display_width(text);
+        if (align == 'r') {
+            write(Glib::ustring(pad + 1, ' '));
+            write(Glib::ustring(text));
+        } else if (align == 'c') {
+            size_t lp = pad / 2 + 1;
+            write(Glib::ustring(lp, ' '));
+            write(Glib::ustring(text));
+            write(Glib::ustring(pad - lp + 1, ' '));
+        } else {
+            write(" ");
+            write(Glib::ustring(text));
+            write(Glib::ustring(pad + 1, ' '));
+        }
+    }
+    write(kVLine);
+    write("\n");
+
+    // Separator line
+    write(kSepLeft);
+    for (size_t c = 0; c < col_widths.size(); ++c) {
+        write(Glib::ustring(repeat(kHLine, col_widths[c] + 2)));
+        write(c + 1 < col_widths.size() ? kPlus : kSepRight);
+    }
+    write("\n");
+
+    // Body rows
+    for (const auto &row : t.rows) {
+        for (size_t c = 0; c < col_widths.size(); ++c) {
+            write(kVLine);
+            if (c >= row.size()) {
+                write(Glib::ustring(std::string(col_widths[c] + 2, ' ')));
+                continue;
+            }
+            std::string text = extract_text(row[c].content);
+            char align = t.alignments.size() > c ? t.alignments[c] : 'l';
+            size_t pad = col_widths[c] - display_width(text);
+            if (align == 'r') {
+                write(Glib::ustring(pad + 1, ' '));
+                write(Glib::ustring(text));
+            } else if (align == 'c') {
+                size_t lp = pad / 2 + 1;
+                write(Glib::ustring(lp, ' '));
+                write(Glib::ustring(text));
+                write(Glib::ustring(pad - lp + 1, ' '));
+            } else {
+                write(" ");
+                write(Glib::ustring(text));
+                write(Glib::ustring(pad + 1, ' '));
+            }
+        }
+        write(kVLine);
+        write("\n");
+    }
+
+    // Bottom border
+    write(kBottomLeft);
+    for (size_t c = 0; c < col_widths.size(); ++c) {
+        write(Glib::ustring(repeat(kHLine, col_widths[c] + 2)));
+        write(c + 1 < col_widths.size() ? kBJunction : kBottomRight);
+    }
+    write("\n");
+}
+
 void MarkdownView::insert_inline(const mdview::TextRun &tr, Gtk::TextIter &iter, Glib::RefPtr<Gtk::TextTag> tag) const {
     Glib::ustring text = tr.text;
     if (text.empty()) return;
@@ -274,7 +459,21 @@ void MarkdownView::setup_color_detection() {
         settings->get_property("gtk-theme-name", theme);
         m_dark_mode = theme.find("dark") != Glib::ustring::npos ||
                       theme.find("Dark") != Glib::ustring::npos;
+
+        // Update colors when theme changes (connection auto-disconnects on widget destroy)
+        auto settings_ref = settings;
+        m_connections.emplace_back(
+            settings_ref->property_gtk_theme_name().signal_changed().connect([this, settings_ref]() {
+                Glib::ustring theme;
+                settings_ref->get_property("gtk-theme-name", theme);
+                m_dark_mode = theme.find("dark") != Glib::ustring::npos ||
+                              theme.find("Dark") != Glib::ustring::npos;
+                update_colors();
+            }));
     }
+
+    // Set initial code block background color
+    update_code_backgrounds();
 }
 
 void MarkdownView::load_file(const Glib::ustring &path) {
@@ -313,6 +512,6 @@ void MarkdownView::update_code_backgrounds() const {
     }
 
     if (const auto code_block_tag = m_tag_table->lookup("code_block")) {
-        code_block_tag->property_background() = bg_color;
+        code_block_tag->property_paragraph_background() = bg_color;
     }
 }
