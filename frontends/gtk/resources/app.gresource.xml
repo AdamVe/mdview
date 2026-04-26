@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
-  <gresource prefix="/com/adamve/mdview">
-    <file compressed="true" preprocess="xml-stripblanks">mdview.ui</file>
-    <file compressed="true">style.css</file>
-  </gresource>
+    <gresource prefix="/com/adamve/mdview">
+        <file compressed="true" preprocess="xml-stripblanks">mdview.ui</file>
+        <file compressed="true">style.css</file>
+    </gresource>
 </gresources>

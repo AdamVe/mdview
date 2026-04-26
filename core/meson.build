@@ -30,9 +30,18 @@ mdview_core_dep = declare_dependency(
   dependencies: [cmark, cmark_ext]
 )
 
-executable('test_parser',
-  'src/test_parser.cpp',
-  include_directories: include_directories('include'),
-  dependencies: [mdview_core_dep],
+# GoogleTest / GoogleMock - build from subproject
+gtest_sub = subproject('gtest')
+gtest = gtest_sub.get_variable('gtest_dep')
+gtest_main = gtest_sub.get_variable('gtest_main_dep')
+
+gtest_inc = gtest_sub.get_variable('gtest_incdir')
+
+gtest_exe = executable('test_parser_gtest',
+  'tests/test_parser.cpp',
+  include_directories: ['include', gtest_inc],
+  dependencies: [mdview_core_dep, gtest, gtest_main],
   install: false
 )
+
+test('parser', gtest_exe, args: ['--gtest_brief=1'])

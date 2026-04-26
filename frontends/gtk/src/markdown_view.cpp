@@ -1,4 +1,5 @@
 #include "markdown_view.hpp"
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <gtkmm.h>
@@ -56,6 +57,56 @@ MarkdownView::MarkdownView() {
     add_css_class("markdown-view");
 
     setup_color_detection();
+
+    apply_zoom();
+}
+
+void MarkdownView::set_zoom(float zoom) {
+    m_target_zoom = std::clamp(zoom, 0.5f, 1.9f);
+
+    if (!m_zoom_animating) {
+        m_zoom_animating = true;
+        add_tick_callback([this](const Glib::RefPtr<Gdk::FrameClock> &clock) -> bool {
+            (void) clock;
+            return this->animate_zoom();
+        });
+    }
+}
+
+float MarkdownView::get_zoom() const { return m_zoom; }
+
+void MarkdownView::apply_zoom() {
+    auto css = Gtk::CssProvider::create();
+    std::string style = ".markdown-view { font-size: ";
+    style += std::to_string(m_zoom);
+    style += "em; }";
+    css->load_from_data(style);
+
+    // Remove old zoom provider if it exists
+    if (m_zoom_css_provider) {
+        get_style_context()->remove_provider_for_display(Gdk::Display::get_default(), m_zoom_css_provider);
+    }
+
+    // Add new provider at a higher priority than the base CSS
+    // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION = 200, so use 210
+    m_zoom_css_provider = css;
+    get_style_context()->add_provider_for_display(Gdk::Display::get_default(), css,
+                                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 10);
+}
+
+bool MarkdownView::animate_zoom() {
+    double diff = m_target_zoom - m_zoom;
+
+    if (std::abs(diff) < 0.01f) {
+        m_zoom = m_target_zoom;
+        apply_zoom();
+        m_zoom_animating = false;
+        return false;
+    }
+
+    m_zoom += diff * 0.25;
+    apply_zoom();
+    return true;
 }
 
 MarkdownView::~MarkdownView() = default;
@@ -230,13 +281,13 @@ void MarkdownView::insert_node(const mdview::OrderedList &ol, Gtk::TextIter &ite
 }
 
 void MarkdownView::insert_node(const mdview::TaskList &tl, Gtk::TextIter &iter) {
-    for (const auto &item : tl.items) {
+    for (const auto &item: tl.items) {
         const char marker = item.completed ? 'x' : ' ';
         iter = m_buffer->insert(iter, "[");
         iter = m_buffer->insert(iter, Glib::ustring(1, marker));
         iter = m_buffer->insert(iter, "] ");
 
-        for (const auto &inline_node : item.content) {
+        for (const auto &inline_node: item.content) {
             std::visit([this, &iter](const auto &inl) { insert_inline(inl, iter); }, inline_node);
         }
         iter = m_buffer->insert(iter, "\n");
@@ -247,17 +298,17 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
     const auto table_cell_tag = m_tag_table->lookup("table_cell");
 
     // UTF-8 box-drawing constants
-    static constexpr const char *kTopLeft =     "┌";
-    static constexpr const char *kTopRight =    "┐";
-    static constexpr const char *kBottomLeft =  "└";
+    static constexpr const char *kTopLeft = "┌";
+    static constexpr const char *kTopRight = "┐";
+    static constexpr const char *kBottomLeft = "└";
     static constexpr const char *kBottomRight = "┘";
-    static constexpr const char *kTJunction =   "┬";
-    static constexpr const char *kPlus =        "┼";
-    static constexpr const char *kBJunction =   "┴";
-    static constexpr const char *kHLine =       "─";
-    static constexpr const char *kVLine =       "│";
-    static constexpr const char *kSepLeft =     "├";
-    static constexpr const char *kSepRight =    "┤";
+    static constexpr const char *kTJunction = "┬";
+    static constexpr const char *kPlus = "┼";
+    static constexpr const char *kBJunction = "┴";
+    static constexpr const char *kHLine = "─";
+    static constexpr const char *kVLine = "│";
+    static constexpr const char *kSepLeft = "├";
+    static constexpr const char *kSepRight = "┤";
 
     // Repeat a UTF-8 string n times
     auto repeat = [](const char *s, size_t n) -> std::string {
@@ -272,23 +323,23 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
     // Extract plain text from inline nodes for width computation
     auto extract_text = [](const std::vector<mdview::InlineNode> &nodes) -> std::string {
         std::string result;
-        for (const auto &node : nodes) {
+        for (const auto &node: nodes) {
             std::visit(
-                [&result](const auto &n) {
-                    if constexpr (std::is_same_v<std::decay_t<decltype(n)>, mdview::TextRun>) {
-                        result += n.text;
-                    }
-                },
-                node);
+                    [&result](const auto &n) {
+                        if constexpr (std::is_same_v<std::decay_t<decltype(n)>, mdview::TextRun>) {
+                            result += n.text;
+                        }
+                    },
+                    node);
         }
         return result;
     };
 
-   // Display width via Pango: measures actual rendered width in monospace font.
+    // Display width via Pango: measures actual rendered width in monospace font.
     // This correctly handles emoji (🖥🗑⭐), symbols (☀♥✔), and CJK characters
     // that wcwidth miscounts for monospace rendering.
     auto pango_layout = create_pango_layout("");
-    PangoFontDescription* raw = pango_font_description_new();
+    PangoFontDescription *raw = pango_font_description_new();
     pango_font_description_set_family(raw, "monospace");
     pango_font_description_set_size(raw, 12 * PANGO_SCALE);
     Pango::FontDescription font_desc(raw, false);
@@ -304,7 +355,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
     // Strip variation selectors (U+FE00–U+FE0F) before measuring
     auto strip_variation_selectors = [](const std::string &s) -> Glib::ustring {
         Glib::ustring result;
-        for (gunichar ch : Glib::ustring(s)) {
+        for (gunichar ch: Glib::ustring(s)) {
             if (ch < 0xFE00 || ch > 0xFE0F)
                 result += ch;
         }
@@ -318,7 +369,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
         pango_layout->set_text(cleaned);
         Pango::Rectangle lr = pango_layout->get_logical_extents();
         int w = lr.get_width();
-        return (w + char_width / 2) / char_width;  // round to nearest
+        return (w + char_width / 2) / char_width; // round to nearest
     };
 
     // Compute max display width per column
@@ -326,13 +377,14 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
     for (size_t c = 0; c < t.header.size(); ++c) {
         col_widths[c] = std::max(col_widths[c], display_width(extract_text(t.header[c].content)));
     }
-    for (const auto &row : t.rows) {
+    for (const auto &row: t.rows) {
         for (size_t c = 0; c < col_widths.size() && c < row.size(); ++c) {
             col_widths[c] = std::max(col_widths[c], display_width(extract_text(row[c].content)));
         }
     }
-    for (auto &w : col_widths) {
-        if (w == 0) w = 1;
+    for (auto &w: col_widths) {
+        if (w == 0)
+            w = 1;
     }
 
     auto write = [&](const Glib::ustring &s) {
@@ -383,7 +435,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
     write("\n");
 
     // Body rows
-    for (const auto &row : t.rows) {
+    for (const auto &row: t.rows) {
         for (size_t c = 0; c < col_widths.size(); ++c) {
             write(kVLine);
             if (c >= row.size()) {
@@ -422,22 +474,28 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
 
 void MarkdownView::insert_inline(const mdview::TextRun &tr, Gtk::TextIter &iter, Glib::RefPtr<Gtk::TextTag> tag) const {
     Glib::ustring text = tr.text;
-    if (text.empty()) return;
+    if (text.empty())
+        return;
 
     // Collect all applicable tags to apply atomically via insert_with_tags
     std::vector<Glib::RefPtr<Gtk::TextTag>> tags;
-    if (tag) tags.push_back(tag);
+    if (tag)
+        tags.push_back(tag);
     if (tr.code) {
-        if (auto code_tag = m_tag_table->lookup("inline_code")) tags.push_back(code_tag);
+        if (auto code_tag = m_tag_table->lookup("inline_code"))
+            tags.push_back(code_tag);
     }
     if (tr.bold) {
-        if (auto bold_tag = m_tag_table->lookup("bold")) tags.push_back(bold_tag);
+        if (auto bold_tag = m_tag_table->lookup("bold"))
+            tags.push_back(bold_tag);
     }
     if (tr.italic) {
-        if (auto italic_tag = m_tag_table->lookup("italic")) tags.push_back(italic_tag);
+        if (auto italic_tag = m_tag_table->lookup("italic"))
+            tags.push_back(italic_tag);
     }
     if (tr.strikethrough) {
-        if (auto strike_tag = m_tag_table->lookup("strikethrough")) tags.push_back(strike_tag);
+        if (auto strike_tag = m_tag_table->lookup("strikethrough"))
+            tags.push_back(strike_tag);
     }
 
     if (tags.empty()) {
@@ -457,19 +515,17 @@ void MarkdownView::setup_color_detection() {
     if (settings) {
         Glib::ustring theme;
         settings->get_property("gtk-theme-name", theme);
-        m_dark_mode = theme.find("dark") != Glib::ustring::npos ||
-                      theme.find("Dark") != Glib::ustring::npos;
+        m_dark_mode = theme.find("dark") != Glib::ustring::npos || theme.find("Dark") != Glib::ustring::npos;
 
         // Update colors when theme changes (connection auto-disconnects on widget destroy)
         auto settings_ref = settings;
-        m_connections.emplace_back(
-            settings_ref->property_gtk_theme_name().signal_changed().connect([this, settings_ref]() {
-                Glib::ustring theme;
-                settings_ref->get_property("gtk-theme-name", theme);
-                m_dark_mode = theme.find("dark") != Glib::ustring::npos ||
-                              theme.find("Dark") != Glib::ustring::npos;
-                update_colors();
-            }));
+        m_connections.emplace_back(settings_ref->property_gtk_theme_name().signal_changed().connect([this,
+                                                                                                     settings_ref]() {
+            Glib::ustring theme;
+            settings_ref->get_property("gtk-theme-name", theme);
+            m_dark_mode = theme.find("dark") != Glib::ustring::npos || theme.find("Dark") != Glib::ustring::npos;
+            update_colors();
+        }));
     }
 
     // Set initial code block background color
@@ -477,13 +533,21 @@ void MarkdownView::setup_color_detection() {
 }
 
 void MarkdownView::load_file(const Glib::ustring &path) {
-    std::ifstream file(path);
+    std::ifstream file(path, std::ios::ate | std::ios::binary);
     if (!file) {
         m_buffer->set_text("Error: Cannot open file\n" + path);
         m_has_content = false;
         return;
     }
 
+    std::streamsize file_size = file.tellg();
+    if (file_size > static_cast<std::streamsize>(mdview::MAX_INPUT_SIZE)) {
+        m_buffer->set_text("Error: File too large (max 10 MB)\n" + path);
+        m_has_content = false;
+        return;
+    }
+
+    file.seekg(0);
     std::stringstream buffer;
     buffer << file.rdbuf();
     std::string content = buffer.str();

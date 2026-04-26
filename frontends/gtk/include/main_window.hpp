@@ -9,7 +9,7 @@ class App;
 
 class MainWindow : public Gtk::ApplicationWindow {
 public:
-    MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &builder, const Glib::RefPtr<App> &app);
+    MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &builder, App *app);
     ~MainWindow() override;
 
     void open_file(const Glib::ustring &path);
@@ -23,8 +23,12 @@ private:
     void setup_actions();
     void on_open_file();
     void on_style_changed();
+    void on_zoom_scroll(double dx, double dy, Gdk::ModifierType state);
+    void on_zoom_in();
+    void on_zoom_out();
+    void on_zoom_reset();
 
-    Glib::RefPtr<App> m_app;
+    App *m_app{};
 
     // Owned widgets (created via Gtk::make_managed, ref-counted by GTK tree)
     MarkdownView *m_markdown_view;
@@ -40,6 +44,7 @@ private:
     Gtk::Stack *m_main_stack{};
 
     Glib::RefPtr<Gtk::FileDialog> m_file_dialog;
+    Glib::RefPtr<Gtk::EventControllerScroll> m_zoom_scroll_controller;
 
     std::vector<sigc::connection> m_connections;
 };

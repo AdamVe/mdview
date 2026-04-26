@@ -1,6 +1,6 @@
 #pragma once
-#include <gtkmm.h>
 #include <functional>
+#include <gtkmm.h>
 #include "mdview/doc_model.hpp"
 
 class MarkdownView : public Gtk::TextView {
@@ -11,6 +11,8 @@ public:
     void load(const mdview::DocModel &model);
     void load_file(const Glib::ustring &path);
     void update_colors() const;
+    void set_zoom(float zoom);
+    float get_zoom() const;
     Glib::RefPtr<Gtk::TextBuffer> get_buffer() { return m_buffer; }
 
 private:
@@ -31,11 +33,17 @@ private:
     void insert_node(const mdview::TaskList &tl, Gtk::TextIter &iter);
     void insert_node(const mdview::Table &t, Gtk::TextIter &iter);
 
+    void apply_zoom();
     void setup_color_detection();
     void update_code_backgrounds() const;
+    bool animate_zoom();
 
     Glib::RefPtr<Gtk::TextBuffer> m_buffer;
     Glib::RefPtr<Gtk::TextTagTable> m_tag_table;
+    Glib::RefPtr<Gtk::CssProvider> m_zoom_css_provider;
+    float m_zoom = 1.0f;
+    float m_target_zoom = 1.0f;
+    bool m_zoom_animating = false;
     bool m_dark_mode = false;
     bool m_has_content = false;
 

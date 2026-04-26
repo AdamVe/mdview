@@ -57,14 +57,10 @@ namespace mdview {
         std::vector<char> alignments;
     };
 
-    enum class ParserError {
-        InvalidInput,
-        InternalError,
-        MalformedInline,
-        UnexpectedNode
-    };
+    enum class ParserError { InvalidInput, InternalError, MalformedInline, UnexpectedNode, InputTooLarge, MaxDepthExceeded };
 
-    using DocNode = std::variant<Heading, Paragraph, CodeBlock, BlockQuote, HRule, BulletList, OrderedList, TaskList, Table>;
+    using DocNode =
+            std::variant<Heading, Paragraph, CodeBlock, BlockQuote, HRule, BulletList, OrderedList, TaskList, Table>;
 
     using DocModel = std::vector<DocNode>;
 

@@ -9,7 +9,7 @@ public:
 
 private:
     bool on_scroll_event(double dx, double dy);
-    bool animate_scroll(const Glib::RefPtr<Gtk::Adjustment>& adj, double target);
+    bool animate_scroll(const Glib::RefPtr<Gtk::Adjustment> &adj, double target);
 
     sigc::connection m_scroll_connection;
 

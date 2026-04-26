@@ -22,10 +22,8 @@ namespace {
     } s_app_info;
 } // namespace
 
-MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &builder,
-                       const Glib::RefPtr<App> &app) :
-    ApplicationWindow(cobject), m_app(app), m_content_box(nullptr), m_header_bar(nullptr),
-    m_file_dialog(nullptr) {
+MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder> &builder, App *app) :
+    ApplicationWindow(cobject), m_app(app), m_content_box(nullptr), m_header_bar(nullptr), m_file_dialog(nullptr) {
 
     set_title("mdview");
 
@@ -61,6 +59,21 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     m_markdown_view = Gtk::make_managed<MarkdownView>();
     m_content_scrolled_window->set_child(*m_markdown_view);
 
+    // Zoom scroll controller on the markdown view
+    m_zoom_scroll_controller = Gtk::EventControllerScroll::create();
+    m_zoom_scroll_controller->set_flags(Gtk::EventControllerScroll::Flags::VERTICAL);
+    m_zoom_scroll_controller->signal_scroll().connect(
+            [this](double dx, double dy) {
+                auto state = m_zoom_scroll_controller->get_current_event_state();
+                if ((state & Gdk::ModifierType::CONTROL_MASK) != Gdk::ModifierType::CONTROL_MASK || dy == 0) {
+                    return false;
+                }
+                on_zoom_scroll(dx, dy, state);
+                return true;
+            },
+            false);
+    m_markdown_view->add_controller(m_zoom_scroll_controller);
+
     // Create SearchBar and connect to markdown view buffer
     m_search_bar = Gtk::make_managed<SearchBar>();
     m_search_bar->set_buffer(m_markdown_view->get_buffer());
@@ -86,6 +99,11 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     const auto menu = Gio::Menu::create();
     menu->append("Open", "win.open");
     menu->append("Search", "win.search");
+    const auto zoom_section = Gio::Menu::create();
+    zoom_section->append("Zoom In", "win.zoom_in");
+    zoom_section->append("Zoom Out", "win.zoom_out");
+    zoom_section->append("Zoom Reset", "win.zoom_reset");
+    menu->append_section(zoom_section);
     const auto section = Gio::Menu::create();
     section->append("About", "win.about");
     section->append("Quit", "win.close");
@@ -118,6 +136,16 @@ void MainWindow::setup_actions() {
     add_action("open", [this]() { on_open_file(); });
     m_app->set_accel_for_action("win.about", {"<Alt>F1"});
     add_action("about", [this]() { show_about(); });
+
+    // Zoom actions
+    m_app->set_accels_for_action("win.zoom_in", {"<Ctrl>plus", "<Ctrl>KP_Add"});
+    add_action("zoom_in", [this]() { on_zoom_in(); });
+
+    m_app->set_accels_for_action("win.zoom_out", {"<Ctrl>minus", "<Ctrl>KP_Subtract"});
+    add_action("zoom_out", [this]() { on_zoom_out(); });
+
+    m_app->set_accel_for_action("win.zoom_reset", "<Ctrl>0");
+    add_action("zoom_reset", [this]() { on_zoom_reset(); });
 }
 
 void MainWindow::on_open_file() {
@@ -150,20 +178,32 @@ void MainWindow::find_next() const { m_search_bar->find_next(); }
 
 void MainWindow::find_previous() const { m_search_bar->find_previous(); }
 
-void MainWindow::on_style_changed() {
-    m_markdown_view->update_colors();
+void MainWindow::on_style_changed() { m_markdown_view->update_colors(); }
+
+void MainWindow::on_zoom_in() { m_markdown_view->set_zoom(m_markdown_view->get_zoom() + 0.1f); }
+
+void MainWindow::on_zoom_out() { m_markdown_view->set_zoom(m_markdown_view->get_zoom() - 0.1f); }
+
+void MainWindow::on_zoom_reset() { m_markdown_view->set_zoom(1.0f); }
+
+void MainWindow::on_zoom_scroll(double /*dx*/, double dy, Gdk::ModifierType state) {
+    if ((state & Gdk::ModifierType::CONTROL_MASK) != Gdk::ModifierType::CONTROL_MASK)
+        return;
+
+    float current = m_markdown_view->get_zoom();
+    if (dy > 0) {
+        m_markdown_view->set_zoom(current - 0.1f);
+    } else {
+        m_markdown_view->set_zoom(current + 0.1f);
+    }
 }
 
 void MainWindow::show_about() {
 #ifdef USE_ADWAITA
-    auto *about = static_cast<AdwAboutDialog *>(g_object_new(ADW_TYPE_ABOUT_DIALOG,
-        "application-name", s_app_info.name,
-        "application-icon", s_app_info.icon,
-        "version", s_app_info.version,
-        "comments", s_app_info.comments,
-        "license-type", GTK_LICENSE_MIT_X11,
-        "website", s_app_info.website,
-        nullptr));
+    auto *about = static_cast<AdwAboutDialog *>(
+            g_object_new(ADW_TYPE_ABOUT_DIALOG, "application-name", s_app_info.name, "application-icon",
+                         s_app_info.icon, "version", s_app_info.version, "comments", s_app_info.comments,
+                         "license-type", GTK_LICENSE_MIT_X11, "website", s_app_info.website, nullptr));
     adw_dialog_present(ADW_DIALOG(about), GTK_WIDGET(this->gobj()));
 #else
     auto about = Gtk::manage(new Gtk::AboutDialog());

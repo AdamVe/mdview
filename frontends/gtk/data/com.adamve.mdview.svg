@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <!-- Background -->
-  <rect width="512" height="512" fill="#4A90D8" rx="64"/>
+    <!-- Background -->
+    <rect width="512" height="512" fill="#4A90D8" rx="64"/>
 
-  <!-- Document shape -->
-  <path d="M144 112 L368 112 L368 400 L144 400 Z" fill="#FFFFFF" />
+    <!-- Document shape -->
+    <path d="M144 112 L368 112 L368 400 L144 400 Z" fill="#FFFFFF"/>
 
-  <!-- Markdown-style text lines -->
-  <rect x="176" y="152" width="180" height="16" rx="4" fill="#333333"/>
-  <rect x="176" y="184" width="160" height="16" rx="4" fill="#333333"/>
-  <rect x="176" y="216" width="145" height="16" rx="4" fill="#333333"/>
-  <rect x="176" y="248" width="160" height="16" rx="4" fill="#333333"/>
+    <!-- Markdown-style text lines -->
+    <rect x="176" y="152" width="180" height="16" rx="4" fill="#333333"/>
+    <rect x="176" y="184" width="160" height="16" rx="4" fill="#333333"/>
+    <rect x="176" y="216" width="145" height="16" rx="4" fill="#333333"/>
+    <rect x="176" y="248" width="160" height="16" rx="4" fill="#333333"/>
 
-  <!-- Code blocks -->
-  <rect x="176" y="288" width="160" height="80" rx="4" fill="#F5F5F5" stroke="#E0E0E0" stroke-width="2"/>
-  <rect x="184" y="296" width="145" height="12" rx="2" fill="#CCCCCC"/>
-  <rect x="184" y="316" width="145" height="12" rx="2" fill="#CCCCCC"/>
-  <rect x="184" y="336" width="145" height="12" rx="2" fill="#CCCCCC"/>
+    <!-- Code blocks -->
+    <rect x="176" y="288" width="160" height="80" rx="4" fill="#F5F5F5" stroke="#E0E0E0" stroke-width="2"/>
+    <rect x="184" y="296" width="145" height="12" rx="2" fill="#CCCCCC"/>
+    <rect x="184" y="316" width="145" height="12" rx="2" fill="#CCCCCC"/>
+    <rect x="184" y="336" width="145" height="12" rx="2" fill="#CCCCCC"/>
 
-  <!-- Angle brackets for code -->
-  <path d="M144 288 L160 328 L144 368 Z" fill="#4A90D8"/>
-  <path d="M368 288 L352 328 L368 368 Z" fill="#4A90D8"/>
+    <!-- Angle brackets for code -->
+    <path d="M144 288 L160 328 L144 368 Z" fill="#4A90D8"/>
+    <path d="M368 288 L352 328 L368 368 Z" fill="#4A90D8"/>
 </svg>
