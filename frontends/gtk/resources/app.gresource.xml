@@ -2,6 +2,7 @@
 <gresources>
     <gresource prefix="/com/adamve/mdview">
         <file compressed="true" preprocess="xml-stripblanks">mdview.ui</file>
+        <file compressed="true" preprocess="xml-stripblanks">search_bar.ui</file>
         <file compressed="true">style.css</file>
     </gresource>
 </gresources>

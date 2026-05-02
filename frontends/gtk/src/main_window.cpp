@@ -77,8 +77,10 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     // Create SearchBar and connect to markdown view buffer
     m_search_bar = Gtk::make_managed<SearchBar>();
     m_search_bar->set_buffer(m_markdown_view->get_buffer());
+    m_search_bar->set_text_view(m_markdown_view);
+    m_search_bar->set_hadjustment(m_content_scrolled_window->get_hadjustment());
     m_search_bar->set_key_capture_widget(*this);
-    m_content_box->prepend(*m_search_bar);
+    m_content_box->append(*m_search_bar);
 
     // Connect header bar open button
     m_connections.emplace_back(
@@ -99,6 +101,8 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     const auto menu = Gio::Menu::create();
     menu->append("Open", "win.open");
     menu->append("Search", "win.search");
+    menu->append("Find Next", "win.find_next");
+    menu->append("Find Previous", "win.find_previous");
     const auto zoom_section = Gio::Menu::create();
     zoom_section->append("Zoom In", "win.zoom_in");
     zoom_section->append("Zoom Out", "win.zoom_out");
@@ -146,6 +150,12 @@ void MainWindow::setup_actions() {
 
     m_app->set_accel_for_action("win.zoom_reset", "<Ctrl>0");
     add_action("zoom_reset", [this]() { on_zoom_reset(); });
+
+    m_app->set_accel_for_action("win.find_next", "<Ctrl>g");
+    add_action("find_next", [this]() { find_next(); });
+
+    m_app->set_accel_for_action("win.find_previous", "<Ctrl><Shift>g");
+    add_action("find_previous", [this]() { find_previous(); });
 }
 
 void MainWindow::on_open_file() {
@@ -178,7 +188,12 @@ void MainWindow::find_next() const { m_search_bar->find_next(); }
 
 void MainWindow::find_previous() const { m_search_bar->find_previous(); }
 
-void MainWindow::on_style_changed() { m_markdown_view->update_colors(); }
+void MainWindow::on_style_changed() {
+    m_markdown_view->update_colors();
+    if (m_search_bar) {
+        m_search_bar->update_highlight_colors();
+    }
+}
 
 void MainWindow::on_zoom_in() { m_markdown_view->set_zoom(m_markdown_view->get_zoom() + 0.1f); }
 

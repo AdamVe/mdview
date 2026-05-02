@@ -10,7 +10,7 @@ public:
 
     void load(const mdview::DocModel &model);
     void load_file(const Glib::ustring &path);
-    void update_colors() const;
+    void update_colors();
     void set_zoom(float zoom);
     float get_zoom() const;
     Glib::RefPtr<Gtk::TextBuffer> get_buffer() { return m_buffer; }
@@ -37,10 +37,12 @@ private:
     void setup_color_detection();
     void update_code_backgrounds() const;
     bool animate_zoom();
+    void setup_search_colors();
+    void update_search_colors();
 
     Glib::RefPtr<Gtk::TextBuffer> m_buffer;
     Glib::RefPtr<Gtk::TextTagTable> m_tag_table;
-    Glib::RefPtr<Gtk::CssProvider> m_zoom_css_provider;
+    Glib::RefPtr<Gtk::TextTag> m_zoom_tag;
     float m_zoom = 1.0f;
     float m_target_zoom = 1.0f;
     bool m_zoom_animating = false;

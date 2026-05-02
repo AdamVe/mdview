@@ -1,7 +1,9 @@
 #include "markdown_view.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <gtkmm.h>
 #include <iostream>
 #include <sstream>
@@ -38,10 +40,6 @@ MarkdownView::MarkdownView() {
     } catch (...) {
     }
 
-    // Apply CSS provider to text view
-    get_style_context()->add_provider_for_display(Gdk::Display::get_default(), css_provider,
-                                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-
     // Create text buffer for markdown content
     m_tag_table = Gtk::TextTagTable::create();
     m_buffer = Gtk::TextBuffer::create(m_tag_table);
@@ -56,8 +54,14 @@ MarkdownView::MarkdownView() {
 
     add_css_class("markdown-view");
 
-    setup_color_detection();
+    // Apply base CSS to text view
+    get_style_context()->add_provider_for_display(Gdk::Display::get_default(), css_provider,
+                                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
+    setup_color_detection();
+    setup_search_colors();
+
+    m_zoom_tag = m_tag_table->lookup("zoom");
     apply_zoom();
 }
 
@@ -76,22 +80,17 @@ void MarkdownView::set_zoom(float zoom) {
 float MarkdownView::get_zoom() const { return m_zoom; }
 
 void MarkdownView::apply_zoom() {
-    auto css = Gtk::CssProvider::create();
-    std::string style = ".markdown-view { font-size: ";
-    style += std::to_string(m_zoom);
-    style += "em; }";
-    css->load_from_data(style);
-
-    // Remove old zoom provider if it exists
-    if (m_zoom_css_provider) {
-        get_style_context()->remove_provider_for_display(Gdk::Display::get_default(), m_zoom_css_provider);
+    if (m_zoom_tag) {
+        m_zoom_tag->property_scale() = m_zoom;
     }
 
-    // Add new provider at a higher priority than the base CSS
-    // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION = 200, so use 210
-    m_zoom_css_provider = css;
-    get_style_context()->add_provider_for_display(Gdk::Display::get_default(), css,
-                                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 10);
+    // Re-apply zoom tag to all text in the buffer
+    if (m_buffer && m_has_content) {
+        auto start = m_buffer->begin();
+        auto end = m_buffer->end();
+        m_buffer->remove_tag(m_zoom_tag, start, end);
+        m_buffer->apply_tag(m_zoom_tag, start, end);
+    }
 }
 
 bool MarkdownView::animate_zoom() {
@@ -130,8 +129,12 @@ void MarkdownView::setup_tags() {
     add_tag("link", "foreground=blue;underline=single;");
     add_tag("hr", "");
     add_tag("bullet", "indent=24;left-margin=24;");
-    add_tag("search_highlight", "background=yellow;");
+    add_tag("search_highlight", "background=#ffff00;");
+    add_tag("search_highlight_current", "background=#ff9500;");
     add_tag("table_cell", "line-height=1;");
+
+    // Zoom tag — scale applied to all text for per-window zoom
+    add_tag("zoom", "");
 }
 
 void MarkdownView::add_tag(const Glib::ustring &name, const Glib::ustring & /*properties*/) const {
@@ -186,7 +189,9 @@ void MarkdownView::add_tag(const Glib::ustring &name, const Glib::ustring & /*pr
         tag->property_left_margin() = 24;
         tag->property_indent() = 24;
     } else if (name == "search_highlight") {
-        tag->property_background() = "yellow";
+        tag->property_background() = "#ffff00";
+    } else if (name == "search_highlight_current") {
+        tag->property_background() = "#ff9500";
     }
     m_tag_table->add(tag);
 }
@@ -561,7 +566,7 @@ void MarkdownView::load_file(const Glib::ustring &path) {
     load(std::move(*result));
 }
 
-void MarkdownView::update_colors() const { update_code_backgrounds(); }
+void MarkdownView::update_colors() { update_code_backgrounds(); update_search_colors(); }
 
 void MarkdownView::update_code_backgrounds() const {
     Glib::ustring bg_color;
@@ -578,4 +583,55 @@ void MarkdownView::update_code_backgrounds() const {
     if (const auto code_block_tag = m_tag_table->lookup("code_block")) {
         code_block_tag->property_paragraph_background() = bg_color;
     }
+}
+
+void MarkdownView::setup_search_colors() {
+    Gdk::RGBA selected_bg, selected_fg;
+    auto style_context = get_style_context();
+    
+    if (style_context->lookup_color("theme_selected_bg_color", selected_bg) &&
+        style_context->lookup_color("theme_selected_fg_color", selected_fg)) {
+        
+        auto highlight_tag = m_tag_table->lookup("search_highlight");
+        auto current_tag = m_tag_table->lookup("search_highlight_current");
+        
+        if (highlight_tag && current_tag) {
+            auto to_hex = [](double component) -> Glib::ustring {
+                int value = static_cast<int>(std::round(component * 255.0));
+                std::ostringstream oss;
+                oss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << value;
+                return Glib::ustring(oss.str());
+            };
+            
+            Glib::ustring bg_hex = Glib::ustring::format(
+                "#", to_hex(selected_bg.get_red()), to_hex(selected_bg.get_green()), to_hex(selected_bg.get_blue())
+            );
+            
+            Glib::ustring fg_hex = Glib::ustring::format(
+                "#", to_hex(selected_fg.get_red()), to_hex(selected_fg.get_green()), to_hex(selected_fg.get_blue())
+            );
+            
+            current_tag->property_background() = bg_hex;
+            current_tag->property_foreground() = fg_hex;
+            
+            Gdk::RGBA dimmed_bg;
+            dimmed_bg.set_rgba(
+                selected_bg.get_red() * 0.6,
+                selected_bg.get_green() * 0.6,
+                selected_bg.get_blue() * 0.6,
+                selected_bg.get_alpha()
+            );
+            
+            Glib::ustring dimmed_hex = Glib::ustring::format(
+                "#", to_hex(dimmed_bg.get_red()), to_hex(dimmed_bg.get_green()), to_hex(dimmed_bg.get_blue())
+            );
+            
+            highlight_tag->property_background() = dimmed_hex;
+            highlight_tag->property_foreground() = fg_hex;
+        }
+    }
+}
+
+void MarkdownView::update_search_colors() {
+    setup_search_colors();
 }

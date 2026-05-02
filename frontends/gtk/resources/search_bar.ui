@@ -1,0 +1,39 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<interface>
+    <requires lib="gtk" version="4.6"/>
+
+    <object class="GtkBox" id="search_bar_box">
+        <property name="orientation">horizontal</property>
+        <property name="spacing">6</property>
+        <child>
+            <object class="GtkSearchEntry" id="search_entry">
+                <property name="hexpand">true</property>
+            </object>
+        </child>
+        <child>
+            <object class="GtkCheckButton" id="highlight_all_button">
+                <property name="label">Highlight all</property>
+                <property name="active">true</property>
+            </object>
+        </child>
+        <child>
+            <object class="GtkCheckButton" id="case_button">
+                <property name="label">Match case</property>
+            </object>
+        </child>
+        <child>
+            <object class="GtkCheckButton" id="whole_words_button">
+                <property name="label">Whole words</property>
+                <property name="active">false</property>
+            </object>
+        </child>
+        <child>
+            <object class="GtkLabel" id="match_label">
+                <property name="label">No match</property>
+                <property name="css-classes">dim-label</property>
+                <property name="width-chars">12</property>
+                <property name="single-line-mode">true</property>
+            </object>
+        </child>
+    </object>
+</interface>
