@@ -59,9 +59,10 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     m_markdown_view = Gtk::make_managed<MarkdownView>();
     m_content_scrolled_window->set_child(*m_markdown_view);
 
-    // Zoom scroll controller on the markdown view
+    // Zoom scroll controller on scrolled window to handle all scroll events
     m_zoom_scroll_controller = Gtk::EventControllerScroll::create();
     m_zoom_scroll_controller->set_flags(Gtk::EventControllerScroll::Flags::VERTICAL);
+    m_zoom_scroll_controller->set_propagation_phase(Gtk::PropagationPhase::CAPTURE);
     m_zoom_scroll_controller->signal_scroll().connect(
             [this](double dx, double dy) {
                 auto state = m_zoom_scroll_controller->get_current_event_state();
@@ -72,7 +73,7 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
                 return true;
             },
             false);
-    m_markdown_view->add_controller(m_zoom_scroll_controller);
+    m_content_scrolled_window->add_controller(m_zoom_scroll_controller);
 
     // Create SearchBar and connect to markdown view buffer
     m_search_bar = Gtk::make_managed<SearchBar>();

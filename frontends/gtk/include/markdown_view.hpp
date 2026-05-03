@@ -36,7 +36,6 @@ private:
     void apply_zoom();
     void setup_color_detection();
     void update_code_backgrounds() const;
-    bool animate_zoom();
     void setup_search_colors();
     void update_search_colors();
 
@@ -44,8 +43,6 @@ private:
     Glib::RefPtr<Gtk::TextTagTable> m_tag_table;
     Glib::RefPtr<Gtk::TextTag> m_zoom_tag;
     float m_zoom = 1.0f;
-    float m_target_zoom = 1.0f;
-    bool m_zoom_animating = false;
     bool m_dark_mode = false;
     bool m_has_content = false;
 

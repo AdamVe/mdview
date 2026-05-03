@@ -66,15 +66,8 @@ MarkdownView::MarkdownView() {
 }
 
 void MarkdownView::set_zoom(float zoom) {
-    m_target_zoom = std::clamp(zoom, 0.5f, 1.9f);
-
-    if (!m_zoom_animating) {
-        m_zoom_animating = true;
-        add_tick_callback([this](const Glib::RefPtr<Gdk::FrameClock> &clock) -> bool {
-            (void) clock;
-            return this->animate_zoom();
-        });
-    }
+    m_zoom = std::clamp(zoom, 0.5f, 1.9f);
+    apply_zoom();
 }
 
 float MarkdownView::get_zoom() const { return m_zoom; }
@@ -93,21 +86,6 @@ void MarkdownView::apply_zoom() {
     }
 }
 
-bool MarkdownView::animate_zoom() {
-    double diff = m_target_zoom - m_zoom;
-
-    if (std::abs(diff) < 0.01f) {
-        m_zoom = m_target_zoom;
-        apply_zoom();
-        m_zoom_animating = false;
-        return false;
-    }
-
-    m_zoom += diff * 0.25;
-    apply_zoom();
-    return true;
-}
-
 MarkdownView::~MarkdownView() = default;
 
 void MarkdownView::setup_tags() {
@@ -121,13 +99,16 @@ void MarkdownView::setup_tags() {
     add_tag("bold", "weight=bold;");
     add_tag("italic", "style=italic;");
     add_tag("strikethrough", "strikethrough=true;");
-    add_tag("inline_code", "family=monospace;");
-    add_tag("code_block", "family=monospace;line-height=1;");
+    add_tag("inline_code", "family=monospace;scale=1.1;");
+    add_tag("code_block", "family=monospace;line-height=1;scale=1.1;");
+    add_tag("code_block_padding_top", "family=monospace;line-height=1;");
+    add_tag("code_block_padding_bottom", "family=monospace;line-height=1;");
+    add_tag("code_block_language", "family=monospace;weight=bold;scale=0.8;");
 
     // Block tags
     add_tag("blockquote", "indent=24;left-margin=24;style=italic;");
     add_tag("link", "foreground=blue;underline=single;");
-    add_tag("hr", "");
+    add_tag("hr", "wrap-mode=none;");
     add_tag("bullet", "indent=24;left-margin=24;");
     add_tag("search_highlight", "background=#ffff00;");
     add_tag("search_highlight_current", "background=#ff9500;");
@@ -165,13 +146,35 @@ void MarkdownView::add_tag(const Glib::ustring &name, const Glib::ustring & /*pr
         tag->property_strikethrough() = true;
     } else if (name == "inline_code") {
         tag->property_family() = "monospace";
+        tag->property_scale() = 1.1;
     } else if (name == "code_block") {
         tag->property_family() = "monospace";
-        tag->property_left_margin() = 16;
+        tag->property_scale() = 1.1;
+        tag->property_left_margin() = 0;
         tag->property_pixels_above_lines() = 0;
         tag->property_pixels_below_lines() = 0;
         tag->property_line_height() = 1.0;
         tag->property_wrap_mode() = Gtk::WrapMode::NONE;
+    } else if (name == "code_block_padding_top") {
+        tag->property_family() = "monospace";
+        tag->property_scale() = 1.1;
+        tag->property_left_margin() = 0;
+        tag->property_pixels_above_lines() = 4;
+        tag->property_pixels_below_lines() = 0;
+        tag->property_line_height() = 1.0;
+        tag->property_wrap_mode() = Gtk::WrapMode::NONE;
+    } else if (name == "code_block_padding_bottom") {
+        tag->property_family() = "monospace";
+        tag->property_scale() = 1.1;
+        tag->property_left_margin() = 0;
+        tag->property_pixels_above_lines() = 0;
+        tag->property_pixels_below_lines() = 8;
+        tag->property_line_height() = 1.0;
+        tag->property_wrap_mode() = Gtk::WrapMode::NONE;
+    } else if (name == "code_block_language") {
+        tag->property_family() = "monospace";
+        tag->property_weight() = Pango::Weight::BOLD;
+        tag->property_scale() = 0.8;
     } else if (name == "table_cell") {
         tag->property_family() = "monospace";
         tag->property_line_height() = 1.0;
@@ -185,6 +188,7 @@ void MarkdownView::add_tag(const Glib::ustring &name, const Glib::ustring & /*pr
         tag->property_foreground() = "#0000ff";
         tag->property_underline() = Pango::Underline::SINGLE;
     } else if (name == "hr") {
+        tag->property_wrap_mode() = Gtk::WrapMode::NONE;
     } else if (name == "bullet") {
         tag->property_left_margin() = 24;
         tag->property_indent() = 24;
@@ -226,10 +230,17 @@ void MarkdownView::insert_node(const mdview::Paragraph &p, Gtk::TextIter &iter) 
 }
 
 void MarkdownView::insert_node(const mdview::CodeBlock &cb, Gtk::TextIter &iter) const {
-    const auto tag = m_tag_table->lookup("code_block");
+    const auto code_tag = m_tag_table->lookup("code_block");
+    const auto top_tag = m_tag_table->lookup("code_block_padding_top");
+    const auto bottom_tag = m_tag_table->lookup("code_block_padding_bottom");
+    const auto lang_tag = m_tag_table->lookup("code_block_language");
 
     if (!cb.language.empty()) {
-        if (const auto lang_tag = m_tag_table->lookup("inline_code")) {
+        const auto padding_tag = m_tag_table->lookup("code_block_padding_top");
+        if (padding_tag) {
+            iter = m_buffer->insert_with_tags(iter, Glib::ustring(" "), {padding_tag});
+        }
+        if (lang_tag) {
             iter = m_buffer->insert_with_tags(iter, Glib::ustring(cb.language), {lang_tag});
         } else {
             iter = m_buffer->insert(iter, cb.language);
@@ -237,8 +248,30 @@ void MarkdownView::insert_node(const mdview::CodeBlock &cb, Gtk::TextIter &iter)
         iter = m_buffer->insert(iter, "\n");
     }
 
-    iter = m_buffer->insert_with_tags(iter, Glib::ustring(cb.code), {tag});
-    iter = m_buffer->insert(iter, "\n");
+    // Split code into lines to add padding
+    std::vector<std::string> lines;
+    std::stringstream ss(cb.code);
+    std::string line;
+    while (std::getline(ss, line)) {
+        lines.push_back(line);
+    }
+
+    // Insert code lines with left padding (leading space)
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const auto &l = lines[i];
+        auto tag = code_tag;
+        if (i == 0) {
+            tag = top_tag;  // First line gets top padding
+        } else if (i == lines.size() - 1) {
+            tag = bottom_tag;  // Last line gets bottom padding
+        }
+        if (l.empty()) {
+            iter = m_buffer->insert_with_tags(iter, Glib::ustring("  "), {tag});
+        } else {
+            iter = m_buffer->insert_with_tags(iter, Glib::ustring("  " + l), {tag});
+        }
+        iter = m_buffer->insert(iter, "\n");
+    }
     iter = m_buffer->insert(iter, "\n");
 }
 
@@ -253,7 +286,7 @@ void MarkdownView::insert_node(const mdview::BlockQuote &bq, Gtk::TextIter &iter
 
 void MarkdownView::insert_node(const mdview::HRule & /*hr*/, Gtk::TextIter &iter) const {
     const auto tag = m_tag_table->lookup("hr");
-    iter = m_buffer->insert_with_tags(iter, Glib::ustring("— — —"), {tag});
+    iter = m_buffer->insert_with_tags(iter, Glib::ustring("──────────────────────────────"), {tag});
     iter = m_buffer->insert(iter, "\n");
 }
 
@@ -577,11 +610,27 @@ void MarkdownView::update_code_backgrounds() const {
     }
 
     if (const auto inline_code_tag = m_tag_table->lookup("inline_code")) {
-        inline_code_tag->property_background() = bg_color;
+        inline_code_tag->property_background_set() = false;
     }
 
     if (const auto code_block_tag = m_tag_table->lookup("code_block")) {
+        code_block_tag->property_background() = bg_color;
         code_block_tag->property_paragraph_background() = bg_color;
+    }
+
+    if (const auto code_block_padding_top_tag = m_tag_table->lookup("code_block_padding_top")) {
+        code_block_padding_top_tag->property_background() = bg_color;
+        code_block_padding_top_tag->property_paragraph_background() = bg_color;
+    }
+
+    if (const auto code_block_padding_bottom_tag = m_tag_table->lookup("code_block_padding_bottom")) {
+        code_block_padding_bottom_tag->property_background() = bg_color;
+        code_block_padding_bottom_tag->property_paragraph_background() = bg_color;
+    }
+
+    if (const auto code_block_language_tag = m_tag_table->lookup("code_block_language")) {
+        code_block_language_tag->property_background() = bg_color;
+        code_block_language_tag->property_paragraph_background() = bg_color;
     }
 }
 
