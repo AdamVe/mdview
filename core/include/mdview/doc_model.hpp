@@ -18,7 +18,12 @@ namespace mdview {
         std::string url;
     };
 
-    using InlineNode = std::variant<TextRun, Link>;
+    struct Image {
+        std::string url;
+        std::string alt;
+    };
+
+    using InlineNode = std::variant<TextRun, Link, Image>;
 
     struct Heading {
         int level;

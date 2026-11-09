@@ -101,6 +101,37 @@ TEST(ParserTest, Parse_BulletList) {
     EXPECT_EQ(extract_inline_text(bl.items[1]), "item 2");
 }
 
+TEST(ParserTest, Parse_TaskList) {
+    std::string md = "- [x] done thing\n- [ ] todo thing\n";
+    auto result = parse_markdown(md);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(result.value().size(), 1u);
+    ASSERT_EQ(node_type_name(result.value()[0]), "TaskList");
+    const auto &tl = std::get<TaskList>(result.value()[0]);
+    ASSERT_EQ(tl.items.size(), 2u);
+    EXPECT_TRUE(tl.items[0].completed);
+    EXPECT_FALSE(tl.items[1].completed);
+    // The "[x]"/"[ ]" marker must not leak into the rendered content
+    EXPECT_EQ(extract_inline_text(tl.items[0].content), "done thing");
+    EXPECT_EQ(extract_inline_text(tl.items[1].content), "todo thing");
+}
+
+TEST(ParserTest, Parse_Link_KeepsRelativeAndAnchorUrls) {
+    std::string md = "See [sibling](./other.md) and [top](#heading).\n";
+    auto result = parse_markdown(md);
+    ASSERT_TRUE(result.has_value());
+    const auto &para = std::get<Paragraph>(result.value()[0]);
+    std::vector<std::pair<std::string, std::string>> links;
+    for (const auto &node: para.content) {
+        if (const auto *link = std::get_if<Link>(&node)) {
+            links.emplace_back(link->text, link->url);
+        }
+    }
+    ASSERT_EQ(links.size(), 2u);
+    EXPECT_EQ(links[0], (std::pair<std::string, std::string>{"sibling", "./other.md"}));
+    EXPECT_EQ(links[1], (std::pair<std::string, std::string>{"top", "#heading"}));
+}
+
 // ---- Security: Input size limit ----
 
 TEST(ParserTest, Parse_InputTooLarge) {
@@ -165,12 +196,60 @@ TEST(ParserTest, Parse_Sanitize_Data_URL) {
     EXPECT_EQ(link->url, "");
 }
 
+TEST(ParserTest, Parse_Image_KeepsUrlAndAlt) {
+    auto result = parse_markdown("![Logo of the project](img/logo.png)");
+    ASSERT_TRUE(result.has_value());
+    const auto &para = std::get<Paragraph>(result.value()[0]);
+    const auto *image = std::get_if<Image>(&para.content[0]);
+    ASSERT_TRUE(image != nullptr);
+    EXPECT_EQ(image->url, "img/logo.png");
+    EXPECT_EQ(image->alt, "Logo of the project");
+}
+
+TEST(ParserTest, Parse_Image_AllowsDataUrl) {
+    auto result = parse_markdown("![x](data:image/png;base64,iVBORw0KGgo=)");
+    ASSERT_TRUE(result.has_value());
+    const auto &para = std::get<Paragraph>(result.value()[0]);
+    const auto *image = std::get_if<Image>(&para.content[0]);
+    ASSERT_TRUE(image != nullptr);
+    EXPECT_EQ(image->url, "data:image/png;base64,iVBORw0KGgo=");
+}
+
+TEST(ParserTest, Parse_Image_SanitizesJavascriptUrl) {
+    auto result = parse_markdown("![x](javascript:alert(1))");
+    ASSERT_TRUE(result.has_value());
+    const auto &para = std::get<Paragraph>(result.value()[0]);
+    const auto *image = std::get_if<Image>(&para.content[0]);
+    ASSERT_TRUE(image != nullptr);
+    EXPECT_EQ(image->url, "");
+    EXPECT_EQ(image->alt, "x");
+}
+
+TEST(ParserTest, Parse_Image_MarkdownInAltIsFlattenedToText) {
+    auto result = parse_markdown("![a **bold** alt](pic.png)");
+    ASSERT_TRUE(result.has_value());
+    const auto &para = std::get<Paragraph>(result.value()[0]);
+    const auto *image = std::get_if<Image>(&para.content[0]);
+    ASSERT_TRUE(image != nullptr);
+    EXPECT_EQ(image->alt, "a bold alt");
+}
+
+TEST(ParserTest, Parse_Image_MixedWithTextRuns) {
+    auto result = parse_markdown("before ![i](p.png) after");
+    ASSERT_TRUE(result.has_value());
+    const auto &para = std::get<Paragraph>(result.value()[0]);
+    ASSERT_TRUE(para.content.size() == 3);
+    EXPECT_EQ(std::get<TextRun>(para.content[0]).text, "before ");
+    EXPECT_STREQ(std::get<Image>(para.content[1]).url.c_str(), "p.png");
+    EXPECT_EQ(std::get<TextRun>(para.content[2]).text, " after");
+}
+
 TEST(ParserTest, Parse_Sanitize_VBScript_URL) {
     auto result = parse_markdown("[link](vbscript:msgbox(1))");
     ASSERT_TRUE(result.has_value());
     const auto &para = std::get<Paragraph>(result.value()[0]);
     const Link *link = nullptr;
-    for (const auto &node : para.content) {
+    for (const auto &node: para.content) {
         if (const auto *l = std::get_if<Link>(&node)) {
             link = l;
             break;
@@ -389,7 +468,7 @@ TEST(ParserTest, Parse_MultipleLinks) {
     ASSERT_GE(para.content.size(), 2u);
     // Find links
     std::string url_a, url_b;
-    for (const auto &node : para.content) {
+    for (const auto &node: para.content) {
         if (const auto *link = std::get_if<Link>(&node)) {
             if (link->text == "a") url_a = link->url;
             if (link->text == "b") url_b = link->url;

@@ -1,8 +1,10 @@
 # 4.12: first release with Gdk::Graphene wrappers, Snapshot::translate and Widget::compute_bounds
 gtkmm    = dependency('gtkmm-4.0', version: '>= 4.12')
+# remote images are fetched directly; Gio's http(s) support needs gvfs host daemons absent in sandboxes
+soup     = dependency('libsoup-3.0')
 adwaita  = dependency('libadwaita-1', required: (frontend == 'adwaita'))
 
-deps = [gtkmm, mdview_core_dep]
+deps = [gtkmm, soup, mdview_core_dep]
 if adwaita.found()
   deps += adwaita
 endif
