@@ -59,6 +59,9 @@ public:
     // Emitted after anything lands on the clipboard; payload is the toast message.
     sigc::signal<void(const Glib::ustring &message)> &signal_copied() { return m_signal_copied; }
 
+    // Emitted after every successful (re)load, including live-reloads.
+    sigc::signal<void()> &signal_loaded() { return m_signal_loaded; }
+
 protected:
     // Keep embedded images fitted to the view when the window is resized
     void size_allocate_vfunc(int width, int height, int baseline) override;
@@ -105,6 +108,8 @@ private:
     void insert_node(const mdview::Heading &h, Gtk::TextIter &iter);
     void insert_node(const mdview::Paragraph &p, Gtk::TextIter &iter);
     void insert_node(const mdview::CodeBlock &cb, Gtk::TextIter &iter);
+    void watch_current_file();
+    void reload_preserving_view();
     bool copy_icon_rect(int block_index, Gdk::Rectangle &out) const;
     int copy_icon_at_point(double x, double y) const;
     void paint_copy_icons(const Glib::RefPtr<Gtk::Snapshot> &snapshot);
@@ -247,6 +252,9 @@ private:
     sigc::signal<void(const Glib::ustring &path)> m_signal_open_file;
     sigc::signal<void(bool, bool)> m_signal_nav_state;
     sigc::signal<void(const Glib::ustring &)> m_signal_copied;
+    sigc::signal<void()> m_signal_loaded;
+    Glib::RefPtr<Gio::FileMonitor> m_file_monitor;
+    Glib::RefPtr<Glib::TimeoutSource> m_reload_timer;
 
     std::vector<sigc::connection> m_connections;
 };

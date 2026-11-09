@@ -21,6 +21,9 @@ public:
 
 private:
     void setup_actions();
+    void rebuild_toc_popover();
+    void sync_toc_selection();
+    void show_toast(const Glib::ustring &message);
     void on_open_file();
     void on_style_changed();
     void on_zoom_scroll(double dx, double dy, Gdk::ModifierType state);
@@ -36,6 +39,13 @@ private:
     SmoothScrolledWindow *m_content_scrolled_window;
     Gtk::Button *m_open_button;
     Gtk::MenuButton *m_menu_button;
+    Gtk::Overlay *m_text_overlay{};
+    Gtk::Box *m_toast_box{};
+    Gtk::Label *m_toast_label{};
+    Glib::RefPtr<Glib::TimeoutSource> m_toast_timer;
+    Gtk::MenuButton *m_toc_button{};
+    Gtk::Popover *m_toc_popover{};
+    Gtk::ListBox *m_toc_list{};
 
     // Builder-extracted widgets (owned by UI tree)
     Gtk::Box *m_content_box;
@@ -44,6 +54,8 @@ private:
     Gtk::Stack *m_main_stack{};
 
     Glib::RefPtr<Gtk::FileDialog> m_file_dialog;
+    Glib::RefPtr<Gio::SimpleAction> m_act_back;
+    Glib::RefPtr<Gio::SimpleAction> m_act_forward;
     Glib::RefPtr<Gtk::EventControllerScroll> m_zoom_scroll_controller;
 
     std::vector<sigc::connection> m_connections;

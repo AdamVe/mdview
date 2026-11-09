@@ -18,16 +18,16 @@ resources = gnome.compile_resources(
 )
 
 includes = include_directories('include', '.')
-sources = files(
-  'src/main.cpp',
+lib_sources = files(
   'src/app.cpp',
   'src/main_window.cpp',
   'src/markdown_view.cpp',
   'src/search_bar.cpp',
   'src/smooth_scrolled_window.cpp',
 )
+sources = ['src/main.cpp'] + lib_sources
 
-executable('mdview',
+mdview_exe = executable('mdview',
   [sources, resources],
   include_directories: [includes],
   dependencies: deps,
@@ -35,6 +35,29 @@ executable('mdview',
   # If the dependency was found (which happens when frontend == 'adwaita'),
   # define the macro for the C++ code.
   cpp_args: (frontend == 'adwaita') ? ['-DUSE_ADWAITA'] : []
+)
+
+# MarkdownView integration tests (skip with exit code 77 when no display)
+mdview_test_exe = executable('test_markdown_view_gtest',
+  ['tests/test_markdown_view.cpp'] + lib_sources + resources,
+  include_directories: [includes, gtest_inc],
+  dependencies: [deps, gtest],
+  install: false,
+  cpp_args: (frontend == 'adwaita') ? ['-DUSE_ADWAITA'] : []
+)
+test('markdown_view', mdview_test_exe, args: ['--gtest_brief=1'], suite: ['gtk'], timeout: 120)
+
+# PNG render regression tests (skip with exit code 77 when no display backend)
+test_render_exe = executable('test_render',
+  '../../tests/render/test_render.cpp',
+  include_directories: [includes, gtest_inc],
+  dependencies: [gtkmm, gtest],
+  install: false,
+)
+test('render_png', test_render_exe,
+  args: [mdview_exe, meson.current_source_dir() / '../../tests/render/fixtures'],
+  suite: ['render'],
+  timeout: 180,
 )
 
 # Install desktop file (absolute Exec for the configured prefix)

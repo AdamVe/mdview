@@ -1669,6 +1669,56 @@ void MarkdownView::load_file(const Glib::ustring &path) {
     }
     m_current_path = path;
     load(std::move(*result));
+    watch_current_file();
+    m_signal_loaded.emit();
+}
+
+// Watch the loaded file so external edits (editor, git checkout) refresh the
+// view. CHANGED/CHANGES_DONE_HINT are debounced briefly because many editors
+// write via temp-file rename bursts.
+void MarkdownView::watch_current_file() {
+    m_file_monitor.reset();
+    if (m_current_path.empty())
+        return;
+    try {
+        m_file_monitor = Gio::File::create_for_path(m_current_path)->monitor_file();
+    } catch (const Gio::Error &) {
+        return; // no monitor backend: live reload is a nicety, not a requirement
+    }
+    m_file_monitor->signal_changed().connect(
+            [this](const Glib::RefPtr<Gio::File> &, const Glib::RefPtr<Gio::File> &, Gio::FileMonitor::Event event) {
+                if (event != Gio::FileMonitor::Event::CHANGED && event != Gio::FileMonitor::Event::CHANGES_DONE_HINT)
+                    return;
+                if (m_reload_timer)
+                    return; // one reload per burst
+                m_reload_timer = Glib::TimeoutSource::create(200);
+                m_reload_timer->connect([this] {
+                    m_reload_timer.reset();
+                    reload_preserving_view();
+                    return false;
+                });
+                m_reload_timer->attach();
+            });
+}
+
+// Re-parse the current file but keep the reader's place: scroll offset and
+// navigation history survive, TOC/search rebuild via signal_loaded.
+void MarkdownView::reload_preserving_view() {
+    if (m_current_path.empty())
+        return;
+    if (!Gio::File::create_for_path(m_current_path)->query_exists())
+        return; // mid-save replacement resolves on the next hint
+    const double scroll = get_vadjustment() ? get_vadjustment()->get_value() : 0.0;
+    auto back = std::move(m_nav_back);
+    auto fwd = std::move(m_nav_fwd);
+    load_file(m_current_path);
+    m_nav_back = std::move(back);
+    m_nav_fwd = std::move(fwd);
+    update_nav_actions();
+    Glib::signal_idle().connect_once([this, scroll] {
+        if (const auto adj = get_vadjustment())
+            adj->set_value(scroll);
+    });
 }
 
 void MarkdownView::update_colors() {
