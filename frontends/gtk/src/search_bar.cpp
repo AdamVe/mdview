@@ -54,7 +54,6 @@ void SearchBar::set_buffer(Glib::RefPtr<Gtk::TextBuffer> buffer) {
 
 void SearchBar::set_text_view(Gtk::TextView *text_view) {
     m_text_view = text_view;
-
     if (!m_buffer || !m_text_view)
         return;
 
@@ -175,7 +174,11 @@ void SearchBar::update_matches() {
     }
 
     Gtk::TextIter match_start, match_end;
-    while (start.forward_search(text, flags, match_start, match_end)) {
+    // Pathological queries ("a" in a 2 MB document) would otherwise collect
+    // millions of matches per keystroke and freeze the UI.
+    constexpr size_t kMaxMatches = 10000;
+    m_matches_capped = false;
+    while (m_matches.size() < kMaxMatches && start.forward_search(text, flags, match_start, match_end)) {
         int match_length = static_cast<int>(match_end.get_offset() - match_start.get_offset());
         if (m_whole_words) {
             if (is_whole_word(match_start, match_end, text)) {
@@ -186,6 +189,7 @@ void SearchBar::update_matches() {
         }
         start = match_end;
     }
+    m_matches_capped = m_matches.size() == kMaxMatches;
 
     m_total_matches = static_cast<int>(m_matches.size());
     m_has_matches = m_total_matches > 0;
@@ -244,7 +248,9 @@ void SearchBar::update_match_count() {
         return;
 
     if (m_has_matches && m_current_match_index >= 0) {
-        const std::string count_text = std::format("{} / {}", m_current_match_index + 1, m_total_matches);
+        const std::string count_text = m_matches_capped
+                                               ? std::format("{} / {}+", m_current_match_index + 1, m_total_matches)
+                                               : std::format("{} / {}", m_current_match_index + 1, m_total_matches);
         m_match_label->set_text(count_text);
     } else {
         m_match_label->set_text("No match");
@@ -347,7 +353,10 @@ void SearchBar::find_previous() {
 }
 
 void SearchBar::clear_highlights() {
-    if (m_buffer) {
+    // Guard before touching the buffer: this runs on every buffer change, and
+    // remove_tag(begin, end) walks the whole run tree — quadratic during
+    // document load when no highlights were ever applied.
+    if (m_buffer && !m_matches.empty()) {
         const auto highlight_tag = m_buffer->get_tag_table()->lookup("search_highlight");
         const auto current_tag = m_buffer->get_tag_table()->lookup("search_highlight_current");
 

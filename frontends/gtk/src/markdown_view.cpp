@@ -3,6 +3,7 @@
 #include <bit>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -78,6 +79,11 @@ namespace {
 
     // Read an entire stream into memory, refusing anything past max_bytes so a
     // hostile http:// response cannot exhaust RAM before gdk-pixbuf sees it.
+    // Decoded-pixbuf cache budget: enough for hundreds of full-size images,
+    // low enough that a crafted document listing thousands of distinct
+    // pictures cannot exhaust memory (oldest entries evict first).
+    constexpr size_t kImageCacheBudget = 192ull * 1024 * 1024;
+
     std::vector<uint8_t> read_capped(const Glib::RefPtr<Gio::InputStream> &stream, guint64 max_bytes) {
         std::vector<uint8_t> out;
         uint8_t buf[64 * 1024];
@@ -389,6 +395,8 @@ void MarkdownView::update_measure_margins() {
 Glib::RefPtr<Gtk::TextTag> MarkdownView::grid_fix_tag(const Glib::ustring &family, int scale_milli, int rise_pu) {
     // scale_milli is zoom-independent: the buffer-wide zoom tag multiplies it.
     // rise_pu is a base in Pango units and needs explicit rescaling (apply_zoom).
+    // Exact values: coarser snapping saved tags but let sub-pixel drift
+    // accumulate across a row's cells into visible border misalignment.
     const Glib::ustring name =
             "mdview-gridfix#" + family + "#" + std::to_string(scale_milli) + "#" + std::to_string(rise_pu);
     if (const auto existing = m_tag_table->lookup(name))
@@ -493,9 +501,7 @@ void MarkdownView::add_tag(const Glib::ustring &name, const Glib::ustring & /*pr
 }
 
 void MarkdownView::clear_dynamic_state() {
-    for (const auto &anchor: m_slugs) {
-        m_buffer->delete_mark_by_name(anchor);
-    }
+    m_anchor_offsets.clear();
     for (const auto &[url, tag]: m_link_tags) {
         m_tag_table->remove(tag);
     }
@@ -567,10 +573,11 @@ MarkdownView::LineInfo MarkdownView::line_info_at(int line_start) const {
 }
 
 void MarkdownView::load(const mdview::DocModel &model) {
+    const bool perf = g_getenv("MDVIEW_DEBUG_PERF") != nullptr;
+    const auto t0 = std::chrono::steady_clock::now();
     clear_dynamic_state();
     m_buffer->set_text("");
-    auto iter = m_buffer->end();
-
+    Gtk::TextIter iter = m_buffer->end();
     for (const auto &node: model) {
         const int start = iter.get_offset();
         std::visit([this, &iter](const auto &n) { insert_node(n, iter); }, node);
@@ -578,10 +585,14 @@ void MarkdownView::load(const mdview::DocModel &model) {
         record_block(start, iter.get_offset(), node);
     }
     strip_body_from_image_markers();
-
-    m_has_content = !model.empty();
     // Freshly inserted text carries no zoom tag; restore the active zoom.
     apply_zoom();
+    if (perf) {
+        const long long ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        std::fprintf(stderr, "[perf] render %zu blocks %lldms\n", model.size(), ms);
+    }
+    m_has_content = !model.empty();
 }
 
 // Prose blocks get comfortable leading plus their kind's trailing gap; code,
@@ -618,9 +629,7 @@ void MarkdownView::style_block_range(int start, int end, const mdview::DocNode &
 void MarkdownView::strip_body_from_image_markers() {
     const std::array<const char *, 4> names = {"body", "para_gap", "list_gap", "quote_gap"};
     for (const auto &img: m_images) {
-        if (!img.mark)
-            continue;
-        auto s = m_buffer->get_iter_at_mark(img.mark);
+        auto s = m_buffer->get_iter_at_offset(img.offset);
         auto e = s;
         e.forward_char();
         for (const char *name: names) {
@@ -635,7 +644,9 @@ void MarkdownView::insert_node(const mdview::Heading &h, Gtk::TextIter &iter) {
     if (!tag)
         tag = m_tag_table->lookup("h4");
 
-    // Register an anchor mark at the line start so internal (#slug) links can scroll here
+    // Anchor offsets are recorded here rather than as buffer marks: every
+    // GtkTextMark taxes all later edits, and positions cannot drift anyway
+    // once a document is loaded.
     const int line_start = iter.get_offset();
     std::string plain;
     for (const auto &inline_node: h.content) {
@@ -652,9 +663,8 @@ void MarkdownView::insert_node(const mdview::Heading &h, Gtk::TextIter &iter) {
     Glib::ustring anchor;
     if (const std::string slug = slugify(plain); !slug.empty()) {
         anchor = Glib::ustring(kAnchorPrefix) + slug;
-        for (int dup = 1; m_buffer->get_mark(anchor); ++dup) {
+        for (int dup = 1; m_anchor_offsets.contains(anchor); ++dup)
             anchor = Glib::ustring(kAnchorPrefix) + slug + "-" + std::to_string(dup);
-        }
     }
 
     for (const auto &inline_node: h.content) {
@@ -664,7 +674,7 @@ void MarkdownView::insert_node(const mdview::Heading &h, Gtk::TextIter &iter) {
 
     if (!anchor.empty()) {
         m_slugs.insert(anchor);
-        m_buffer->create_mark(anchor, m_buffer->get_iter_at_offset(line_start), false);
+        m_anchor_offsets.emplace(anchor, line_start);
         m_toc.push_back({h.level, Glib::ustring(plain), anchor});
     }
 }
@@ -708,22 +718,24 @@ void MarkdownView::insert_node(const mdview::CodeBlock &cb, Gtk::TextIter &iter)
         lines.push_back(line);
     }
 
-    // Insert code lines with left padding (leading space)
+    // Insert code lines with left padding (leading space). Batching keeps the
+    // buffer-edit count flat in line count: GtkTextView updates every mark on
+    // every edit, which is quadratic on large documents otherwise.
     const int code_start = iter.get_offset();
-    for (size_t i = 0; i < lines.size(); ++i) {
-        const auto &l = lines[i];
-        auto tag = code_tag;
-        if (i == 0) {
-            tag = top_tag;  // First line gets top padding
-        } else if (i == lines.size() - 1) {
-            tag = bottom_tag;  // Last line gets bottom padding
+    auto code_line = [](const std::string &l) { return l.empty() ? std::string("  ") : "  " + l; };
+    if (!lines.empty()) {
+        iter = m_buffer->insert_with_tags(iter, code_line(lines.front()) + "\n", {top_tag ? top_tag : code_tag});
+        std::string body;
+        for (size_t i = 1; i + 1 < lines.size(); ++i) {
+            body += code_line(lines[i]);
+            body += "\n";
         }
-        if (l.empty()) {
-            iter = m_buffer->insert_with_tags(iter, Glib::ustring("  "), {tag});
-        } else {
-            iter = m_buffer->insert_with_tags(iter, Glib::ustring("  " + l), {tag});
+        if (!body.empty())
+            iter = m_buffer->insert_with_tags(iter, body, {code_tag});
+        if (lines.size() > 1) {
+            const Glib::ustring last = code_line(lines.back()) + "\n";
+            iter = m_buffer->insert_with_tags(iter, last, {bottom_tag ? bottom_tag : code_tag});
         }
-        iter = m_buffer->insert(iter, "\n");
     }
     m_code_blocks.emplace_back(code_start, iter.get_offset());
     iter = m_buffer->insert(iter, "\n");
@@ -954,6 +966,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
     // drawing characters on adjacent lines lose contact (visible gaps in the
     // vertical rules around rows containing tall emoji).
     const auto &mono_m = measure_cluster("M");
+    const Glib::ustring mono_family = mono_m.family;
     const int cell_font_h = mono_m.font_h;
     const int cell_asc = mono_m.asc > 0 ? mono_m.asc : mono_m.font_h * 3 / 4;
     const int cell_desc = mono_m.desc > 0 ? mono_m.font_h - mono_m.asc : mono_m.font_h - cell_asc;
@@ -962,10 +975,16 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
     // nearest whole number of monospace cells (minimum 1). The residual is
     // corrected by uniformly scaling the run, so round (not ceil) is exact.
     auto cluster_cols = [&](const Glib::ustring &cluster) -> size_t {
-        const int w = measure_cluster(cluster).px;
-        if (w <= 0)
+        const auto &m = measure_cluster(cluster);
+        if (m.px <= 0)
             return 0;
-        return std::max<size_t>(1, static_cast<size_t>((w + char_width / 2) / char_width));
+        if (!m.family.empty() && m.family == mono_family) {
+            // True monospace text sits exactly one cell per character. Measuring
+            // and rounding instead lets AA/kerning noise flip a cluster a whole
+            // cell, desynchronising the padded content rows from the rules.
+            return std::max<size_t>(1, g_utf8_strlen(cluster.c_str(), cluster.bytes()));
+        }
+        return std::max<size_t>(1, static_cast<size_t>((m.px + char_width / 2) / char_width));
     };
 
     auto display_width = [&](const std::string &s) -> size_t {
@@ -991,13 +1010,21 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
             w = 1;
     }
 
-    auto write = [&](const Glib::ustring &s) {
-        if (table_cell_tag) {
-            iter = m_buffer->insert_with_tags(iter, s, {table_cell_tag});
-        } else {
-            iter = m_buffer->insert(iter, s);
-        }
+    // GtkTextView walks every mark on every buffer edit; a large document has
+    // tens of thousands (heading anchors, image anchors), so table rendering
+    // must touch the buffer as few times as possible. Plain cell text is
+    // accumulated here and flushed in one insert; tagged runs flush first.
+    std::string pending;
+    auto flush = [&] {
+        if (pending.empty())
+            return;
+        if (table_cell_tag)
+            iter = m_buffer->insert_with_tags(iter, pending, {table_cell_tag});
+        else
+            iter = m_buffer->insert(iter, pending);
+        pending.clear();
     };
+    auto write = [&](const Glib::ustring &s) { pending += s.raw(); };
 
     // Write cell content so every cluster occupies an exact whole number of
     // monospace cells: emoji and symbols render at fractional multiples of the
@@ -1009,6 +1036,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
     // capped by scale (shrinking the glyph keeps the row compact); the width
     // freed by that extra shrink is padded with a fractionally scaled space.
     auto space_scale_tag = [&](int milli) -> Glib::RefPtr<Gtk::TextTag> {
+        milli = static_cast<int>(std::lround(milli));
         const Glib::ustring name = "mdview-spfix#" + std::to_string(milli);
         if (const auto existing = m_tag_table->lookup(name))
             return existing;
@@ -1041,6 +1069,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
                 // cap so the row does not stretch.
                 if (cap < 1.0 && !m.family.empty()) {
                     const int rise = m.desc > 0 ? std::max(0, static_cast<int>(cap * m.desc) - cell_desc) : 0;
+                    flush();
                     std::vector<Glib::RefPtr<Gtk::TextTag>> tags{
                             grid_fix_tag(m.family, static_cast<int>(std::lround(cap * 1000.0)), rise)};
                     if (table_cell_tag)
@@ -1053,6 +1082,13 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
             }
             fit = std::min(fit, cap);
             const int rise = m.desc > 0 ? std::max(0, static_cast<int>(fit * m.desc) - cell_desc) : 0;
+            // Plain monospace text (the overwhelming majority of cells): the
+            // cell tag alone renders exactly right; creating a fix tag would
+            // bloat the tag table quadratically on large documents.
+            if (std::abs(fit - 1.0) < 0.0005 && rise == 0 && (m.family.empty() || m.family == mono_family)) {
+                write(cl.text);
+                continue;
+            }
             if (dbg)
                 std::print(stderr,
                            "[table] '{}' px={} cw={} cols={} fam='{}' h={} asc={} desc={} cell={}/{} fit={:.3f} "
@@ -1064,6 +1100,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
             // win, so this run's scale stays zoom-independent: zoom scales the
             // corrected width along with everything else.
             const int scale_milli = static_cast<int>(std::lround(fit * 1000.0));
+            flush();
             std::vector<Glib::RefPtr<Gtk::TextTag>> tags{grid_fix_tag(m.family, scale_milli, rise)};
             if (table_cell_tag)
                 tags.insert(tags.begin(), table_cell_tag);
@@ -1076,6 +1113,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
             if (residual >= 2 && char_width > 0) {
                 const int sp_milli =
                         static_cast<int>(std::lround(static_cast<long long>(residual) * 1000 / char_width));
+                flush();
                 std::vector<Glib::RefPtr<Gtk::TextTag>> pad{space_scale_tag(sp_milli)};
                 if (table_cell_tag)
                     pad.insert(pad.begin(), table_cell_tag);
@@ -1084,23 +1122,32 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
         }
     };
 
+    // Box-drawing glyphs often resolve to a fallback font whose advance
+    // differs slightly from the cell monospace; over a long rule that drift
+    // detaches the corners from the content rows. Routing these runs through
+    // write_cell_text applies the same per-cluster width correction cells get.
+    auto write_grid = [&](const char *g) { write_cell_text(g); };
+
     // Top border
-    write(kTopLeft);
+    write_grid(kTopLeft);
     for (size_t c = 0; c < col_widths.size(); ++c) {
-        write(Glib::ustring(repeat(kHLine, col_widths[c] + 2)));
-        write(c + 1 < col_widths.size() ? kTJunction : kTopRight);
+        write_grid(repeat(kHLine, col_widths[c] + 2).c_str());
+        write_grid(c + 1 < col_widths.size() ? kTJunction : kTopRight);
     }
     write("\n");
 
     // Header row
     for (size_t c = 0; c < t.header.size() && c < col_widths.size(); ++c) {
-        write(kVLine);
+        write_grid(kVLine);
         std::string text = extract_text(t.header[c].content);
         char align = t.alignments.size() > c ? t.alignments[c] : 'l';
         size_t pad = col_widths[c] - display_width(text);
         if (align == 'r') {
+            // Gutter on both sides like every other cell type; omitting the
+            // trailing space makes content rows shorter than the rules.
             write(Glib::ustring(pad + 1, ' '));
             write_cell_text(text);
+            write(" ");
         } else if (align == 'c') {
             size_t lp = pad / 2 + 1;
             write(Glib::ustring(lp, ' '));
@@ -1112,21 +1159,21 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
             write(Glib::ustring(pad + 1, ' '));
         }
     }
-    write(kVLine);
+    write_grid(kVLine);
     write("\n");
 
     // Separator line
-    write(kSepLeft);
+    write_grid(kSepLeft);
     for (size_t c = 0; c < col_widths.size(); ++c) {
-        write(Glib::ustring(repeat(kHLine, col_widths[c] + 2)));
-        write(c + 1 < col_widths.size() ? kPlus : kSepRight);
+        write_grid(repeat(kHLine, col_widths[c] + 2).c_str());
+        write_grid(c + 1 < col_widths.size() ? kPlus : kSepRight);
     }
     write("\n");
 
     // Body rows
     for (const auto &row: t.rows) {
         for (size_t c = 0; c < col_widths.size(); ++c) {
-            write(kVLine);
+            write_grid(kVLine);
             if (c >= row.size()) {
                 write(Glib::ustring(std::string(col_widths[c] + 2, ' ')));
                 continue;
@@ -1137,6 +1184,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
             if (align == 'r') {
                 write(Glib::ustring(pad + 1, ' '));
                 write_cell_text(text);
+                write(" ");
             } else if (align == 'c') {
                 size_t lp = pad / 2 + 1;
                 write(Glib::ustring(lp, ' '));
@@ -1148,17 +1196,18 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
                 write(Glib::ustring(pad + 1, ' '));
             }
         }
-        write(kVLine);
+        write_grid(kVLine);
         write("\n");
     }
 
     // Bottom border
-    write(kBottomLeft);
+    write_grid(kBottomLeft);
     for (size_t c = 0; c < col_widths.size(); ++c) {
-        write(Glib::ustring(repeat(kHLine, col_widths[c] + 2)));
-        write(c + 1 < col_widths.size() ? kBJunction : kBottomRight);
+        write_grid(repeat(kHLine, col_widths[c] + 2).c_str());
+        write_grid(c + 1 < col_widths.size() ? kBJunction : kBottomRight);
     }
     write("\n");
+    flush();
 }
 
 void MarkdownView::insert_inline(const mdview::TextRun &tr, Gtk::TextIter &iter, Glib::RefPtr<Gtk::TextTag> tag) const {
@@ -1276,6 +1325,10 @@ Glib::RefPtr<Gdk::Pixbuf> MarkdownView::load_image(const std::string &url) {
             } else {
                 file = Gio::File::create_for_path(url);
             }
+            // Blocking devices (FIFOs, stale mounts) would freeze the UI thread
+            // indefinitely inside read(); accept plain files only.
+            if (!has_uri_scheme(url) && file->query_file_type() != Gio::FileType::REGULAR)
+                throw std::runtime_error("image source is not a regular file");
             const auto stream = file->read();
             data = read_capped(stream, kMaxEncodedBytes);
         }
@@ -1309,8 +1362,22 @@ Glib::RefPtr<Gdk::Pixbuf> MarkdownView::load_image(const std::string &url) {
             }
         }
     }
-    if (result)
-        m_image_cache[url] = result;
+    if (result) {
+        const size_t bytes =
+                static_cast<size_t>(result->get_rowstride()) * static_cast<size_t>(std::max(1, result->get_height()));
+        m_image_cache.emplace(url, result);
+        m_image_cache_order.push_back(url);
+        m_image_cache_bytes += bytes;
+        while (m_image_cache_bytes > kImageCacheBudget && !m_image_cache_order.empty()) {
+            const auto victim = m_image_cache_order.front();
+            m_image_cache_order.pop_front();
+            if (auto it = m_image_cache.find(victim); it != m_image_cache.end()) {
+                m_image_cache_bytes -= static_cast<size_t>(it->second->get_rowstride()) *
+                                       static_cast<size_t>(std::max(1, it->second->get_height()));
+                m_image_cache.erase(it);
+            }
+        }
+    }
     return result;
 }
 
@@ -1319,6 +1386,23 @@ Glib::RefPtr<Gdk::Pixbuf> MarkdownView::load_image(const std::string &url) {
 bool MarkdownView::is_remote_url(const std::string &url) {
     return url.starts_with("http://") || url.starts_with("https://") ||
            g_ascii_strncasecmp(url.c_str(), "HTTP://", 7) == 0 || g_ascii_strncasecmp(url.c_str(), "HTTPS://", 8) == 0;
+}
+
+// SVG additionally defers even from disk: librsvg resolves external hrefs and
+// XIncludes inside the picture, so an attacker-supplied .svg could phone home
+// or pull second-stage content without the consent the click-to-load promise
+// exists to obtain.
+bool MarkdownView::needs_click_to_load(const std::string &url) {
+    if (is_remote_url(url))
+        return true;
+    const std::string path = url.substr(0, url.find_first_of("?#"));
+    const auto dot = path.rfind('.');
+    if (dot == std::string::npos)
+        return false;
+    std::string ext = path.substr(dot + 1);
+    for (auto &c: ext)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext == "svg" || ext == "svgz";
 }
 
 namespace {
@@ -1357,9 +1441,7 @@ void MarkdownView::rescale_images() {
 // painting share this so they can never disagree). Pending placeholders use a
 // fixed natural size; loading swaps in the real one.
 bool MarkdownView::image_rect_buffer(const ImagePlacement &img, Gdk::Rectangle &out) const {
-    if (!img.mark)
-        return false;
-    const auto iter = m_buffer->get_iter_at_mark(img.mark);
+    const auto iter = m_buffer->get_iter_at_offset(img.offset);
     if (!iter)
         return false;
     int top = 0;
@@ -1447,9 +1529,54 @@ void MarkdownView::load_remote_image(size_t index) {
 
 // Paint each embedded image over its reserved line. Positions come from the
 // anchor marks every frame, so scrolling, zoom and resize track automatically.
+// Buffer-offset range currently scrolled into view; used to cull per-frame
+// painting work to what can actually be seen (huge documents stall otherwise).
+bool MarkdownView::visible_offset_range(int &top, int &bottom) const {
+    const auto adj = get_vadjustment();
+    if (!adj || get_height() <= 0)
+        return false;
+    Gtk::TextConstIter it;
+    int line_top = 0;
+    get_line_at_y(it, static_cast<int>(adj->get_value()), line_top);
+    top = it.get_offset();
+    get_line_at_y(it, static_cast<int>(adj->get_value()) + get_height(), line_top);
+    bottom = it.get_offset();
+    return true;
+}
+
 void MarkdownView::snapshot_vfunc(const Glib::RefPtr<Gtk::Snapshot> &snapshot) {
     Gtk::TextView::snapshot_vfunc(snapshot);
-    for (const auto &img: m_images) {
+    int vis_top = 0;
+    int vis_bottom = 0;
+    const bool culled = visible_offset_range(vis_top, vis_bottom);
+    const int slack = 4096; // lines around the fold keep scrolling smooth
+    size_t first_img = 0;
+    size_t last_img = m_images.size();
+    if (culled && !m_images.empty()) {
+        auto mark_offset = [this](size_t i) { return m_images[i].offset; };
+        size_t lo = 0;
+        size_t hi = m_images.size();
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (mark_offset(mid) < vis_top - slack)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        first_img = lo;
+        lo = first_img;
+        hi = m_images.size();
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (mark_offset(mid) > vis_bottom + slack)
+                hi = mid;
+            else
+                lo = mid + 1;
+        }
+        last_img = lo;
+    }
+    for (size_t i = first_img; i < last_img; ++i) {
+        const auto &img = m_images[i];
         Gdk::Rectangle r;
         if (!image_rect_buffer(img, r))
             continue;
@@ -1474,7 +1601,19 @@ void MarkdownView::paint_copy_icons(const Glib::RefPtr<Gtk::Snapshot> &snapshot)
     if (m_code_blocks.empty())
         return;
     const Gdk::RGBA fg = m_dark_mode ? Gdk::RGBA("#b8b8bc") : Gdk::RGBA("#5a5a60");
-    for (size_t i = 0; i < m_code_blocks.size(); ++i) {
+    int vis_top = 0;
+    int vis_bottom = 0;
+    size_t first = 0;
+    size_t last = m_code_blocks.size();
+    if (visible_offset_range(vis_top, vis_bottom)) {
+        first = static_cast<size_t>(std::lower_bound(m_code_blocks.begin(), m_code_blocks.end(), vis_top - 4096,
+                                                     [](const std::pair<int, int> &b, int v) { return b.second < v; }) -
+                                    m_code_blocks.begin());
+        last = static_cast<size_t>(std::upper_bound(m_code_blocks.begin(), m_code_blocks.end(), vis_bottom + 4096,
+                                                    [](int v, const std::pair<int, int> &b) { return v < b.first; }) -
+                                   m_code_blocks.begin());
+    }
+    for (size_t i = first; i < last; ++i) {
         Gdk::Rectangle r;
         if (!copy_icon_rect(static_cast<int>(i), r))
             continue;
@@ -1571,8 +1710,15 @@ void MarkdownView::apply_image_line_height(Gtk::TextTag &tag, int rendered_heigh
 void MarkdownView::insert_inline(const mdview::Image &img, Gtk::TextIter &iter, const Glib::RefPtr<Gtk::TextTag> &tag) {
     // Remote images are never fetched automatically (privacy); they render as a
     // click-to-load placeholder. Everything else loads eagerly at layout time.
-    const bool remote = is_remote_url(img.url);
-    const auto pixbuf = remote ? Glib::RefPtr<Gdk::Pixbuf>{} : load_image(img.url);
+    const bool remote = needs_click_to_load(img.url);
+    Glib::RefPtr<Gdk::Pixbuf> pixbuf;
+    if (remote) {
+        // A previously click-loaded image survives live reloads via the cache.
+        if (const auto cached = m_image_cache.find(img.url); cached != m_image_cache.end())
+            pixbuf = cached->second;
+    } else {
+        pixbuf = load_image(img.url);
+    }
     if (!remote && !pixbuf) {
         // Placeholder: italic "[alt]" so the reader knows something is missing.
         std::vector<Glib::RefPtr<Gtk::TextTag>> tags;
@@ -1610,9 +1756,10 @@ void MarkdownView::insert_inline(const mdview::Image &img, Gtk::TextIter &iter, 
     // so tiny images show no leftover glyph box behind them.
     m_buffer->insert_with_tags(m_buffer->get_iter_at_offset(off), "\u200B", tags);
 
-    const auto mark = m_buffer->create_mark("mdview-img#" + std::to_string(id), m_buffer->get_iter_at_offset(off),
-                                            true /* left gravity */);
-    m_images.push_back({.mark = mark, .url = img.url, .alt = img.alt, .pixbuf = pixbuf});
+    // Offset, not a mark: buffer content is immutable while viewed, and each
+    // extra GtkTextMark taxes every later edit (see heading anchors).
+    m_images.push_back(
+            {.offset = off, .url = img.url, .alt = img.alt, .pixbuf = pixbuf, .texture = {}, .failed = false});
     ++off; // past the zero-width marker
 
     m_buffer->insert(m_buffer->get_iter_at_offset(off), "\n");
@@ -1651,7 +1798,7 @@ void MarkdownView::load_file(const Glib::ustring &path) {
 
     std::streamsize file_size = file.tellg();
     if (file_size > static_cast<std::streamsize>(mdview::MAX_INPUT_SIZE)) {
-        m_buffer->set_text("Error: File too large (max 10 MB)\n" + path);
+        m_buffer->set_text("Error: File too large (max 2 MB)\n" + path);
         m_has_content = false;
         return;
     }
@@ -1661,7 +1808,13 @@ void MarkdownView::load_file(const Glib::ustring &path) {
     buffer << file.rdbuf();
     std::string content = buffer.str();
 
+    const auto t0 = std::chrono::steady_clock::now();
     auto result = mdview::parse_markdown(content);
+    if (g_getenv("MDVIEW_DEBUG_PERF")) {
+        const long long ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+        std::fprintf(stderr, "[perf] parse %lldms\n", ms);
+    }
     if (!result) {
         m_buffer->set_text("Error: Failed to parse markdown document.");
         m_has_content = false;
@@ -1838,7 +1991,14 @@ void MarkdownView::update_list_indent() {
 // ---------------------------------------------------------------------------
 
 void MarkdownView::launch_uri(const std::string &uri) {
-    auto launcher = Gtk::UriLauncher::create(uri);
+    // Content-authored URIs must not smuggle control characters into desktop
+    // handlers (terminal titles, shell quoting quirks).
+    std::string clean;
+    clean.reserve(uri.size());
+    for (const char c: uri)
+        if (static_cast<unsigned char>(c) >= 0x20 && c != 0x7F)
+            clean += c;
+    auto launcher = Gtk::UriLauncher::create(clean);
     launcher->launch([launcher, uri](const Glib::RefPtr<Gio::AsyncResult> &result) {
         try {
             launcher->launch_finish(result);
@@ -1851,13 +2011,14 @@ void MarkdownView::launch_uri(const std::string &uri) {
 // Scrolls like an internal link but addressed by the anchor mark directly
 // (table-of-contents popover); pushes history so Back returns here.
 void MarkdownView::jump_to_anchor(const Glib::ustring &anchor) {
-    const auto mark = m_buffer->get_mark(anchor);
-    if (!mark)
+    const auto entry = m_anchor_offsets.find(anchor);
+    if (entry == m_anchor_offsets.end())
         return;
     if (const auto adj = get_vadjustment())
         m_nav_back.push_back(adj->get_value());
     m_nav_fwd.clear();
-    scroll_to(mark, 0.0, 0.5, 0.15);
+    Gtk::TextIter target = m_buffer->get_iter_at_offset(entry->second);
+    scroll_to(target, 0.0, 0.5, 0.15);
     update_nav_actions();
 }
 
@@ -1872,10 +2033,10 @@ int MarkdownView::visible_toc_index() const {
     get_iter_at_location(top, bx, by);
     int best = -1;
     for (size_t i = 0; i < m_toc.size(); ++i) {
-        const auto mark = m_buffer->get_mark(m_toc[i].anchor);
-        if (!mark)
+        const auto entry = m_anchor_offsets.find(m_toc[i].anchor);
+        if (entry == m_anchor_offsets.end())
             continue;
-        if (m_buffer->get_iter_at_mark(mark).get_line() > top.get_line())
+        if (m_buffer->get_iter_at_offset(entry->second).get_line() > top.get_line())
             break;
         best = static_cast<int>(i);
     }
@@ -1889,12 +2050,13 @@ void MarkdownView::follow_link(const Glib::ustring &url) {
 
     // Internal anchor: scroll to the matching heading, remembering where we were
     if (u[0] == '#') {
-        const auto mark = m_buffer->get_mark(Glib::ustring(kAnchorPrefix) + slugify(u.substr(1)));
-        if (mark) {
+        const auto entry = m_anchor_offsets.find(Glib::ustring(kAnchorPrefix) + slugify(u.substr(1)));
+        if (entry != m_anchor_offsets.end()) {
             if (const auto adj = get_vadjustment())
                 m_nav_back.push_back(adj->get_value());
             m_nav_fwd.clear();
-            scroll_to(mark, 0.0, 0.5, 0.15);
+            Gtk::TextIter target = m_buffer->get_iter_at_offset(entry->second);
+            scroll_to(target, 0.0, 0.5, 0.15);
             update_nav_actions();
         }
         return;
@@ -1918,7 +2080,7 @@ void MarkdownView::follow_link(const Glib::ustring &url) {
                         m_signal_open_file.emit(p);
                         return;
                     }
-                    launch_uri("file://" + p);
+                    launch_uri(Gio::File::create_for_path(p)->get_uri());
                     return;
                 }
             }
@@ -2223,7 +2385,7 @@ bool MarkdownView::code_block_bounds(const Gtk::TextConstIter &iter, int &start,
 
 const MarkdownView::ImagePlacement *MarkdownView::image_at_anchor(const Gtk::TextIter &iter) const {
     for (const auto &img: m_images) {
-        if (img.mark && iter.compare(m_buffer->get_iter_at_mark(img.mark)) == 0)
+        if (iter.get_offset() == img.offset)
             return &img;
     }
     return nullptr;

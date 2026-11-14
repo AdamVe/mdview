@@ -42,6 +42,7 @@ private:
     std::vector<Match> m_matches;
     int m_current_match_index;
     int m_total_matches;
+    bool m_matches_capped = false; // hit the scan cap; count shown as "N+"
     bool m_has_matches;
     bool m_highlight_all;
     bool m_whole_words;

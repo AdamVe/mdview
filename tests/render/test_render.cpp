@@ -139,6 +139,28 @@ namespace {
         EXPECT_GE(count_matching(result.pixbuf, 242, 242, 244), 320 * 180 / 2);
     }
 
+    TEST(RenderPng, SvgIsDeferredUntilClick) {
+        const auto result = render_png("svg_defer.md");
+        ASSERT_EQ(result.exit_code, 0) << result.stderr_text;
+        ASSERT_TRUE(result.pixbuf);
+        // Local SVG must show the click-to-load placeholder (#f2f2f4), never a
+        // librsvg decode: its internals reference an unreachable http href.
+        EXPECT_GE(count_matching(result.pixbuf, 242, 242, 244), 320 * 180 / 2);
+    }
+
+    TEST(RenderPng, CliRejectsAbsurdWidth) {
+        try {
+            const auto proc =
+                    Gio::Subprocess::create({g_mdview, "--render-png", "/tmp/opencode/mv/cli-width.png", "--width",
+                                             "2000000000", Glib::build_filename(g_fixtures, "blocks.md")},
+                                            Gio::Subprocess::Flags::STDERR_PIPE);
+            proc->wait();
+            EXPECT_EQ(proc->get_exit_status(), 2); // rejected before any allocation
+        } catch (const Glib::Error &e) {
+            ADD_FAILURE() << "spawn failed: " << e.what();
+        }
+    }
+
 } // namespace
 
 int main(int argc, char **argv) {

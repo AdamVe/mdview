@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <graphene.h>
@@ -130,14 +131,16 @@ int main(int argc, char *argv[]) {
             png_out = argv[++i];
         } else if (std::strcmp(argv[i], "--width") == 0 && i + 1 < argc) {
             const std::string_view arg = argv[++i];
-            if (std::from_chars(arg.data(), arg.data() + arg.size(), width).ec != std::errc{}) {
-                std::print(stderr, "mdview: invalid --width '{}'\n", arg);
+            if (std::from_chars(arg.data(), arg.data() + arg.size(), width).ec != std::errc{} || width < 16 ||
+                width > 20000) {
+                std::print(stderr, "mdview: invalid --width '{}' (expected 16..20000)\n", arg);
                 return 2;
             }
         } else if (std::strcmp(argv[i], "--zoom") == 0 && i + 1 < argc) {
             const std::string_view arg = argv[++i];
-            if (std::from_chars(arg.data(), arg.data() + arg.size(), zoom).ec != std::errc{}) {
-                std::print(stderr, "mdview: invalid --zoom '{}'\n", arg);
+            if (std::from_chars(arg.data(), arg.data() + arg.size(), zoom).ec != std::errc{} || !std::isfinite(zoom) ||
+                zoom < 0.2f || zoom > 4.0f) {
+                std::print(stderr, "mdview: invalid --zoom '{}' (expected finite 0.2..4.0)\n", arg);
                 return 2;
             }
         } else if (argv[i][0] != '-') {

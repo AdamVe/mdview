@@ -46,6 +46,7 @@ private:
     Gtk::MenuButton *m_toc_button{};
     Gtk::Popover *m_toc_popover{};
     Gtk::ListBox *m_toc_list{};
+    bool m_toc_dirty{};
 
     // Builder-extracted widgets (owned by UI tree)
     Gtk::Box *m_content_box;

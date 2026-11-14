@@ -132,6 +132,35 @@ TEST(ParserTest, Parse_Link_KeepsRelativeAndAnchorUrls) {
     EXPECT_EQ(links[1], (std::pair<std::string, std::string>{"top", "#heading"}));
 }
 
+// ---- Security: UTF-8 sanitising ----
+
+TEST(ParserTest, Parse_InvalidUtf8Sanitised) {
+    const auto result = parse_markdown("# bad \xff\xfepdf \xc3\xa9 ok\n\n```c\nint x = \xe2\x80;\n```\n");
+    ASSERT_TRUE(result.has_value());
+    // Every string that reaches the model must be valid UTF-8 (GtkTextBuffer
+    // asserts otherwise). Walk the heading text and code block bytes.
+    std::string all;
+    for (const auto &node: *result) {
+        std::visit(
+                [&all](const auto &n) {
+                    using U = std::decay_t<decltype(n)>;
+                    if constexpr (std::is_same_v<U, mdview::Heading>) {
+                        for (const auto &inl: n.content) {
+                            if (const auto *t = std::get_if<mdview::TextRun>(&inl))
+                                all += t->text;
+                        }
+                    } else if constexpr (std::is_same_v<U, mdview::CodeBlock>) {
+                        all += n.code;
+                    }
+                },
+                node);
+    }
+    EXPECT_EQ(all.find('\xff'), std::string::npos);
+    EXPECT_NE(all.find("\xEF\xBF\xBD"), std::string::npos); // replacement inserted
+    EXPECT_NE(all.find("pdf"), std::string::npos); // neighbours survive
+    EXPECT_NE(all.find("\xc3\xa9"), std::string::npos); // valid utf8 untouched
+}
+
 // ---- Security: Input size limit ----
 
 TEST(ParserTest, Parse_InputTooLarge) {

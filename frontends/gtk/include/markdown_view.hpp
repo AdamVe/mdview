@@ -1,9 +1,12 @@
 #pragma once
+#include <deque>
 #include <flat_map>
 #include <flat_set>
 #include <functional>
 #include <gtkmm.h>
+#include <memory>
 #include <string>
+#include <vector>
 #include "mdview/doc_model.hpp"
 
 class MarkdownView : public Gtk::TextView {
@@ -19,7 +22,7 @@ public:
     Glib::RefPtr<Gtk::TextBuffer> get_buffer() { return m_buffer; }
 
     // Document outline for the header-bar table-of-contents popover (built
-    // during load(); anchor is the buffer mark name of the heading line).
+    // during load(); anchor is the internal key of the heading line).
     struct TocEntry {
         int level = 1;
         Glib::ustring title;
@@ -96,6 +99,9 @@ private:
     // Images: resolved/decoded pixbufs cached per document load
     Glib::RefPtr<Gdk::Pixbuf> load_image(const std::string &url);
     static bool is_remote_url(const std::string &url);
+    // Images fetched only after an explicit click: remote urls, plus local SVG
+    // (whose loader resolves external references on its own).
+    static bool needs_click_to_load(const std::string &url);
     double image_scale_for(int natural_width) const;
     void rescale_images();
     int base_line_height();
@@ -110,6 +116,7 @@ private:
     void insert_node(const mdview::CodeBlock &cb, Gtk::TextIter &iter);
     void watch_current_file();
     void reload_preserving_view();
+    bool visible_offset_range(int &top, int &bottom) const;
     bool copy_icon_rect(int block_index, Gdk::Rectangle &out) const;
     int copy_icon_at_point(double x, double y) const;
     void paint_copy_icons(const Glib::RefPtr<Gtk::Snapshot> &snapshot);
@@ -201,6 +208,7 @@ private:
     unsigned m_link_tag_counter = 0;
     std::flat_set<std::string> m_slugs;
     std::vector<TocEntry> m_toc;
+    std::map<Glib::ustring, int> m_anchor_offsets; // anchor name -> buffer offset
     std::vector<std::pair<int, int>> m_code_blocks;
     Glib::ustring m_current_path;
 
@@ -208,7 +216,7 @@ private:
     // A null pixbuf with a remote url is a click-to-load placeholder (failed = last
     // attempt errored; clicking retries).
     struct ImagePlacement {
-        Glib::RefPtr<Gtk::TextMark> mark;
+        int offset; // buffer offset of the zero-width marker line
         std::string url;
         std::string alt;
         Glib::RefPtr<Gdk::Pixbuf> pixbuf;
@@ -228,6 +236,8 @@ private:
     };
     std::vector<ImgLine> m_imgline_tags;
     std::flat_map<std::string, Glib::RefPtr<Gdk::Pixbuf>> m_image_cache;
+    std::deque<std::string> m_image_cache_order; // FIFO eviction order
+    size_t m_image_cache_bytes = 0; // decoded bytes held by the cache
     unsigned m_image_counter = 0;
 
     // Scroll positions of anchor jumps (back stack) and undone jumps (forward)

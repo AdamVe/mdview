@@ -106,7 +106,11 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
         m_toc_popover->popdown();
     });
     scroller.set_child(*m_toc_list);
-    m_toc_popover->signal_show().connect([this]() { sync_toc_selection(); });
+    m_toc_popover->signal_show().connect([this]() {
+        if (m_toc_dirty)
+            rebuild_toc_popover();
+        sync_toc_selection();
+    });
     m_toc_button->set_popover(*m_toc_popover);
     m_menu_button = Gtk::make_managed<Gtk::MenuButton>();
     m_menu_button->set_icon_name("open-menu-symbolic");
@@ -149,7 +153,10 @@ MainWindow::MainWindow(BaseObjectType *cobject, const Glib::RefPtr<Gtk::Builder>
     m_content_scrolled_window->add_controller(m_zoom_scroll_controller);
 
     m_markdown_view->signal_copied().connect([this](const Glib::ustring &message) { show_toast(message); });
-    m_markdown_view->signal_loaded().connect([this] { rebuild_toc_popover(); });
+    m_markdown_view->signal_loaded().connect([this] {
+        m_toc_dirty = true;
+        m_toc_button->set_visible(!m_markdown_view->toc().empty());
+    });
 
     // Create SearchBar and connect to markdown view buffer
     m_search_bar = Gtk::make_managed<SearchBar>();
@@ -273,13 +280,18 @@ void MainWindow::open_file(const Glib::ustring &path) {
 // Repopulates the outline popover from the freshly loaded document; rows are
 // indented per heading level and h1/h2 get bold labels.
 void MainWindow::rebuild_toc_popover() {
+    m_toc_dirty = false;
     for (auto *child = m_toc_list->get_first_child(); child != nullptr;) {
         auto *next = child->get_next_sibling();
         m_toc_list->remove(*child);
         child = next;
     }
     const auto &entries = m_markdown_view->toc();
-    for (const auto &entry: entries) {
+    // Tens of thousands of rows would freeze the UI; list a generous prefix
+    // and say so. Jumping still works for listed entries.
+    constexpr size_t kMaxRows = 1000;
+    for (size_t i = 0; i < std::min(kMaxRows, entries.size()); ++i) {
+        const auto &entry = entries[i];
         auto *row = Gtk::make_managed<Gtk::ListBoxRow>();
         row->set_margin_start((std::max(1, entry.level) - 1) * 16);
         auto *label = Gtk::make_managed<Gtk::Label>(entry.title);
@@ -289,6 +301,13 @@ void MainWindow::rebuild_toc_popover() {
         if (entry.level <= 2)
             label->set_markup("<b>" + Glib::Markup::escape_text(entry.title) + "</b>");
         row->set_child(*label);
+        m_toc_list->append(*row);
+    }
+    if (entries.size() > kMaxRows) {
+        auto *row = Gtk::make_managed<Gtk::ListBoxRow>();
+        row->set_sensitive(false);
+        row->set_child(
+                *Gtk::make_managed<Gtk::Label>(Glib::ustring::format("… {} more headings", entries.size() - kMaxRows)));
         m_toc_list->append(*row);
     }
     m_toc_button->set_visible(!entries.empty());

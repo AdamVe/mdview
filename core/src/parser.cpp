@@ -9,6 +9,57 @@
 
 namespace mdview {
 
+    // Replace ill-formed UTF-8 with U+FFFD (one replacement per bad lead byte,
+    // WHATWG-style). Untrusted documents reach GtkTextBuffer, which asserts on
+    // invalid UTF-8; sanitising here keeps the frontend honest and the display
+    // deterministic. Rejects overlong forms, surrogates, > U+10FFFF, truncation.
+    static std::string sanitize_utf8(std::string_view in) {
+        std::string out;
+        out.reserve(in.size());
+        size_t i = 0;
+        while (i < in.size()) {
+            const unsigned char b0 = static_cast<unsigned char>(in[i]);
+            if (b0 < 0x80) {
+                out += static_cast<char>(b0);
+                ++i;
+                continue;
+            }
+            size_t len = 0;
+            unsigned cp = 0;
+            if ((b0 & 0xE0) == 0xC0) {
+                len = 2;
+                cp = b0 & 0x1Fu;
+            } else if ((b0 & 0xF0) == 0xE0) {
+                len = 3;
+                cp = b0 & 0x0Fu;
+            } else if ((b0 & 0xF8) == 0xF0) {
+                len = 4;
+                cp = b0 & 0x07u;
+            }
+            bool ok = b0 >= 0xC2 && b0 <= 0xF4 && i + len <= in.size();
+            for (size_t k = 1; ok && k < len; ++k) {
+                const unsigned char bk = static_cast<unsigned char>(in[i + k]);
+                if ((bk & 0xC0) != 0x80) {
+                    ok = false;
+                    break;
+                }
+                cp = (cp << 6) | (bk & 0x3Fu);
+            }
+            if (ok && ((len == 3 && cp < 0x800) || (len == 4 && cp < 0x10000)))
+                ok = false; // overlong encoding
+            if (ok && (cp > 0x10FFFFu || (cp >= 0xD800 && cp <= 0xDFFF)))
+                ok = false;
+            if (ok) {
+                out.append(in.substr(i, len));
+                i += len;
+            } else {
+                out += "\xEF\xBF\xBD";
+                ++i;
+            }
+        }
+        return out;
+    }
+
     // Forward declarations
     static std::expected<std::vector<InlineNode>, ParserError> parse_inline_node(cmark_node *node, int depth);
     static std::expected<std::vector<InlineNode>, ParserError> parse_inline_children(cmark_node *node, int depth);
@@ -39,7 +90,7 @@ namespace mdview {
             lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         const bool dangerous = lower.starts_with("javascript:") || lower.starts_with("vbscript:") ||
                                (!allow_data && lower.starts_with("data:"));
-        return dangerous ? std::string() : raw;
+        return dangerous ? std::string() : sanitize_utf8(raw);
     }
 
     // Flatten inline children into plain text (used for image alt text)
@@ -91,13 +142,13 @@ namespace mdview {
         switch (cmark_node_get_type(node)) {
             case CMARK_NODE_TEXT: {
                 TextRun run;
-                run.text = std::string(get_literal(node)); // Allocate: text may be transient
+                run.text = sanitize_utf8(get_literal(node)); // Allocate: text may be transient
                 return std::vector<InlineNode>{run};
             }
 
             case CMARK_NODE_CODE: {
                 TextRun run;
-                run.text = std::string(get_literal(node)); // Allocate
+                run.text = sanitize_utf8(get_literal(node)); // Allocate
                 run.code = true;
                 return std::vector<InlineNode>{run};
             }
@@ -325,8 +376,8 @@ namespace mdview {
             case CMARK_NODE_CODE_BLOCK: {
                 CodeBlock code_block;
                 const char *lang = cmark_node_get_fence_info(node);
-                code_block.language = lang ? std::string(lang) : std::string();
-                code_block.code = std::string(get_literal(node)); // Allocate code content
+                code_block.language = lang ? sanitize_utf8(lang) : std::string();
+                code_block.code = sanitize_utf8(get_literal(node)); // Allocate code content
                 return code_block;
             }
 

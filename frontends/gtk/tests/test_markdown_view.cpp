@@ -4,8 +4,10 @@
 // (right-click inside a code block crashed).
 
 #include <cstdlib>
+#include <sys/stat.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <gtkmm.h>
@@ -183,6 +185,53 @@ namespace {
         auto fresh = mdview::parse_markdown(kDoc);
         ASSERT_TRUE(static_cast<bool>(fresh));
         g_view->load(std::move(*fresh));
+    }
+
+    TEST_F(MarkdownViewSuite, OversizedFileShowsCapError) {
+        char tmpl[] = "/tmp/mdview-cap-XXXXXX.md";
+        const int fd = mkstemps(tmpl, 3);
+        ASSERT_GE(fd, 0);
+        close(fd);
+        const std::string path = tmpl;
+        {
+            std::ofstream out(path);
+            out << std::string(mdview::MAX_INPUT_SIZE + 1, 'x');
+        }
+        g_view->load_file(path);
+        const std::string text = g_view->get_buffer()->begin().get_text(g_view->get_buffer()->end()).raw();
+        unlink(path.c_str());
+        EXPECT_NE(text.find("File too large"), std::string::npos);
+        EXPECT_NE(text.find("2 MB"), std::string::npos);
+        // Leave the standard document in place for later tests.
+        auto fresh = mdview::parse_markdown(kDoc);
+        ASSERT_TRUE(static_cast<bool>(fresh));
+        g_view->load(*fresh);
+    }
+
+    TEST_F(MarkdownViewSuite, FifoImageDoesNotHangLoad) {
+        char tmpl[] = "/tmp/mdview-fifo-XXXXXX";
+        const char *dir = mkdtemp(tmpl);
+        ASSERT_TRUE(dir != nullptr);
+        const std::string fifo = std::string(dir) + "/pipe.img";
+        ASSERT_EQ(mkfifo(fifo.c_str(), 0666), 0);
+        const std::string doc = std::string(dir) + "/doc.md";
+        {
+            std::ofstream out(doc);
+            out << "![pipelined](" << fifo << ")\n";
+        }
+        const auto before = std::chrono::steady_clock::now();
+        g_view->load_file(doc); // would block forever without the regular-file guard
+        const auto elapsed =
+                std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - before).count();
+        EXPECT_LT(elapsed, 5);
+        const auto text = g_view->get_buffer()->begin().get_text(g_view->get_buffer()->end()).raw();
+        EXPECT_NE(text.find("[pipelined]"), std::string::npos); // alt-text placeholder shown
+        unlink(fifo.c_str());
+        unlink(doc.c_str());
+        rmdir(dir);
+        auto fresh = mdview::parse_markdown(kDoc);
+        ASSERT_TRUE(static_cast<bool>(fresh));
+        g_view->load(*fresh);
     }
 
     TEST_F(MarkdownViewSuite, ParagraphHasNoCodeBlock) {
