@@ -109,8 +109,10 @@ private:
     bool copy_icon_rect(int block_index, Gdk::Rectangle &out) const;
     int copy_icon_at_point(double x, double y) const;
     void paint_copy_icons(const Glib::RefPtr<Gtk::Snapshot> &snapshot);
+    void paint_quote_bars(const Glib::RefPtr<Gtk::Snapshot> &snapshot);
     void insert_node(const mdview::BlockQuote &bq, Gtk::TextIter &iter);
     void insert_node(const mdview::HRule &hr, Gtk::TextIter &iter) const;
+    Glib::RefPtr<Gtk::TextTag> quote_tag(int depth);
     void insert_node(const mdview::List &list, Gtk::TextIter &iter);
     void insert_list_entries(const std::vector<mdview::ListEntry> &entries, Gtk::TextIter &iter, int depth);
     Glib::RefPtr<Gtk::TextTag> list_tag(int depth);

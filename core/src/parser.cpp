@@ -64,6 +64,7 @@ namespace mdview {
     static std::expected<std::vector<InlineNode>, ParserError> parse_inline_node(cmark_node *node, int depth);
     static std::expected<std::vector<InlineNode>, ParserError> parse_inline_children(cmark_node *node, int depth);
     static std::expected<std::vector<ListEntry>, ParserError> parse_list_entries(cmark_node *list, int depth);
+    static std::expected<std::vector<DocNode>, ParserError> collect_block_quotes(cmark_node *quote, int depth);
     static std::expected<DocNode, ParserError> parse_block_node(cmark_node *node);
     static std::expected<std::vector<DocNode>, ParserError> parse_document(cmark_node *root);
 
@@ -400,6 +401,62 @@ namespace mdview {
         return entries;
     }
 
+    // Collect every block quote rooted at `quote` as one or more DocNodes:
+    // consecutive paragraphs merge into a single BlockQuote separated by
+    // newlines, nested quotes are emitted as siblings with depth+1 so the
+    // view can indent them without a recursive variant.
+    static std::expected<std::vector<DocNode>, ParserError> collect_block_quotes(cmark_node *quote, int depth) {
+        if (depth >= MAX_LIST_DEPTH) [[unlikely]] {
+            return std::unexpected(ParserError::MaxDepthExceeded);
+        }
+        std::vector<DocNode> nodes;
+        std::vector<InlineNode> pending;
+        auto flush = [&]() {
+            if (!pending.empty()) {
+                nodes.push_back(BlockQuote{std::move(pending), depth});
+                pending.clear();
+            }
+        };
+
+        for (cmark_node *child = cmark_node_first_child(quote); child; child = cmark_node_next(child)) {
+            switch (cmark_node_get_type(child)) {
+                case CMARK_NODE_BLOCK_QUOTE: {
+                    flush();
+                    auto inner = collect_block_quotes(child, depth + 1);
+                    if (!inner) [[unlikely]] {
+                        return std::unexpected(inner.error());
+                    }
+                    nodes.insert(nodes.end(), std::make_move_iterator(inner->begin()),
+                                 std::make_move_iterator(inner->end()));
+                    break;
+                }
+                case CMARK_NODE_PARAGRAPH: {
+                    auto content_result = parse_inline_children(child, 0);
+                    if (!content_result) [[unlikely]] {
+                        return std::unexpected(content_result.error());
+                    }
+                    if (!pending.empty() && !content_result->empty()) {
+                        pending.push_back(TextRun{"\n"});
+                    }
+                    pending.insert(pending.end(), std::make_move_iterator(content_result->begin()),
+                                   std::make_move_iterator(content_result->end()));
+                    break;
+                }
+                case CMARK_NODE_CODE_BLOCK: {
+                    if (!pending.empty()) {
+                        pending.push_back(TextRun{"\n"});
+                    }
+                    pending.push_back(TextRun{sanitize_utf8(get_literal(child)), false, false, true});
+                    break;
+                }
+                default:
+                    break; // headings/lists inside quotes are rare; skip rather than lose the quote
+            }
+        }
+        flush();
+        return nodes;
+    }
+
     // Parse a single block node (heading, paragraph, code block, etc.)
     static std::expected<DocNode, ParserError> parse_block_node(cmark_node *node) {
         // Extension node types have no public enum values; match by type name.
@@ -471,15 +528,14 @@ namespace mdview {
             }
 
             case CMARK_NODE_BLOCK_QUOTE: {
-                BlockQuote bq;
-                if (cmark_node *first_child = cmark_node_first_child(node)) {
-                    auto content_result = parse_inline_children(first_child, 0);
-                    if (!content_result) [[unlikely]] {
-                        return std::unexpected(content_result.error());
-                    }
-                    bq.content = std::move(*content_result);
+                auto collected = collect_block_quotes(node, 0);
+                if (!collected) [[unlikely]] {
+                    return std::unexpected(collected.error());
                 }
-                return bq;
+                if (collected->empty()) [[unlikely]] {
+                    return BlockQuote{};
+                }
+                return std::move(collected->front());
             }
 
             case CMARK_NODE_THEMATIC_BREAK: {
@@ -579,6 +635,17 @@ namespace mdview {
             }
 
             // Not in front matter - parse normally
+            if (cmark_node_get_type(child) == CMARK_NODE_BLOCK_QUOTE) {
+                auto quotes = collect_block_quotes(child, 0);
+                if (!quotes) [[unlikely]] {
+                    return std::unexpected(quotes.error());
+                }
+                result.insert(result.end(), std::make_move_iterator(quotes->begin()),
+                              std::make_move_iterator(quotes->end()));
+                content_started = true;
+                child = cmark_node_next(child);
+                continue;
+            }
             auto block_result = parse_block_node(child);
             if (!block_result) [[unlikely]] {
                 return std::unexpected(block_result.error());

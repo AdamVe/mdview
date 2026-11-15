@@ -551,7 +551,7 @@ void MarkdownView::record_block(int start, int end, const mdview::DocNode &node)
                     }
                     record_lines(start, end, LineKind::CodeLine);
                 } else if constexpr (std::is_same_v<U, mdview::BlockQuote>) {
-                    record_lines(start, end, LineKind::BlockQuote);
+                    record_lines(start, end, LineKind::BlockQuote, std::to_string(n.depth));
                 } else if constexpr (std::is_same_v<U, mdview::HRule>) {
                     record_lines(start, end, LineKind::HRule);
                 } else if constexpr (std::is_same_v<U, mdview::List>) {
@@ -736,9 +736,26 @@ void MarkdownView::insert_node(const mdview::CodeBlock &cb, Gtk::TextIter &iter)
     iter = m_buffer->insert(iter, "\n");
 }
 
+Glib::RefPtr<Gtk::TextTag> MarkdownView::quote_tag(int depth) {
+    // Same lazy pattern as list_tag(): depth 0 reuses the classic "blockquote"
+    // tag; deeper quotes get "blockquote-dN" siblings with proportional margins.
+    const Glib::ustring name =
+            depth == 0 ? Glib::ustring("blockquote") : Glib::ustring("blockquote-d" + std::to_string(depth));
+    if (const auto existing = m_tag_table->lookup(name))
+        return existing;
+    const auto tag = Gtk::TextTag::create(name);
+    m_tag_table->add(tag);
+    const int extra = static_cast<int>(m_base_indent * m_zoom);
+    tag->property_left_margin() = m_measure_margin + extra * (depth + 1);
+    tag->property_indent() = extra;
+    tag->property_background() = m_dark_mode ? "#2a2a2a" : "#f0f0f0";
+    tag->property_paragraph_background() = m_dark_mode ? "#2a2a2a" : "#f0f0f0";
+    return tag;
+}
+
 void MarkdownView::insert_node(const mdview::BlockQuote &bq, Gtk::TextIter &iter) {
     update_list_indent();
-    auto tag = m_tag_table->lookup("blockquote");
+    auto tag = quote_tag(bq.depth);
 
     for (const auto &inline_node: bq.content) {
         std::visit([this, &iter, &tag](const auto &inl) { insert_inline(inl, iter, tag); }, inline_node);
@@ -1591,11 +1608,61 @@ void MarkdownView::snapshot_vfunc(const Glib::RefPtr<Gtk::Snapshot> &snapshot) {
         if (img.texture)
             snapshot->append_texture(img.texture, Gdk::Graphene::Rect(wx, wy, r.get_width(), r.get_height()));
     }
+    paint_quote_bars(snapshot);
     paint_copy_icons(snapshot);
 }
 
 // Small copy glyph at the top-left of every code block, in front of the
 // language label. Painted (not a widget) so buffer layout is untouched.
+// GitHub-style vertical rule in the gutter of each block-quote run. Lines are
+// recorded per logical line with their quote depth in LineInfo::info; maximal
+// runs of equal depth become one rect spanning wrapped lines via line yranges.
+void MarkdownView::paint_quote_bars(const Glib::RefPtr<Gtk::Snapshot> &snapshot) {
+    if (m_line_info.empty())
+        return;
+    const Gdk::RGBA bar = m_dark_mode ? Gdk::RGBA("#52525a") : Gdk::RGBA("#d0d7de");
+    int vis_top = 0;
+    int vis_bottom = 0;
+    const bool culled = visible_offset_range(vis_top, vis_bottom);
+
+    int run_depth = -1;
+    int run_first_line = 0;
+    int prev_line = -2;
+    auto flush_run = [&](int last_line) {
+        if (run_depth < 0)
+            return;
+        int y0 = 0;
+        int h0 = 0;
+        int y1 = 0;
+        int h1 = 0;
+        get_line_yrange(m_buffer->get_iter_at_line(run_first_line), y0, h0);
+        get_line_yrange(m_buffer->get_iter_at_line(last_line), y1, h1);
+        const int extra = static_cast<int>(m_base_indent * m_zoom);
+        const double x = m_measure_margin + extra * (run_depth + 1) - 5.0;
+        int wx = 0;
+        int wy = 0;
+        buffer_to_window_coords(Gtk::TextWindowType::TEXT, static_cast<int>(x), y0, wx, wy);
+        snapshot->append_color(bar, Gdk::Graphene::Rect(wx, wy, 3.0, (y1 + h1) - y0));
+        run_depth = -1;
+    };
+
+    for (const auto &[offset, info]: m_line_info) {
+        if (info.kind != LineKind::BlockQuote)
+            continue;
+        if (culled && (offset < vis_top - 4096 || offset > vis_bottom + 4096))
+            continue;
+        const int depth = info.info.empty() ? 0 : std::atoi(info.info.c_str());
+        const int line = m_buffer->get_iter_at_offset(offset).get_line();
+        if (depth != run_depth || line != prev_line + 1) {
+            flush_run(prev_line);
+            run_depth = depth;
+            run_first_line = line;
+        }
+        prev_line = line;
+    }
+    flush_run(prev_line);
+}
+
 void MarkdownView::paint_copy_icons(const Glib::RefPtr<Gtk::Snapshot> &snapshot) {
     if (m_code_blocks.empty())
         return;
@@ -1918,10 +1985,13 @@ void MarkdownView::update_code_backgrounds() const {
         code_block_language_tag->property_paragraph_background() = bg_color;
     }
 
-    if (const auto blockquote_tag = m_tag_table->lookup("blockquote")) {
-        blockquote_tag->property_background() = bg_color;
-        blockquote_tag->property_paragraph_background() = bg_color;
-    }
+    m_tag_table->foreach ([&](const Glib::RefPtr<Gtk::TextTag> &tag) {
+        const Glib::ustring name = tag->property_name();
+        if (std::string_view(name.raw()).starts_with("blockquote")) {
+            tag->property_background() = bg_color;
+            tag->property_paragraph_background() = bg_color;
+        }
+    });
 }
 
 void MarkdownView::setup_search_colors() {
@@ -1977,11 +2047,18 @@ void MarkdownView::update_list_indent() {
         }
     }
     for (int depth = 1;; ++depth) {
-        const auto tag = m_tag_table->lookup("bullet-d" + std::to_string(depth));
-        if (!tag)
+        const auto bullet = m_tag_table->lookup("bullet-d" + std::to_string(depth));
+        if (!bullet)
             break;
-        tag->property_left_margin() = m_measure_margin + extra * (depth + 1);
-        tag->property_indent() = extra;
+        bullet->property_left_margin() = m_measure_margin + extra * (depth + 1);
+        bullet->property_indent() = extra;
+    }
+    for (int depth = 1;; ++depth) {
+        const auto quote = m_tag_table->lookup("blockquote-d" + std::to_string(depth));
+        if (!quote)
+            break;
+        quote->property_left_margin() = m_measure_margin + extra * (depth + 1);
+        quote->property_indent() = extra;
     }
 }
 

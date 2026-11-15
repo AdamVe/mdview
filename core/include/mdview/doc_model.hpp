@@ -38,6 +38,7 @@ namespace mdview {
     };
     struct BlockQuote {
         std::vector<InlineNode> content;
+        int depth = 0; // 0 for a top-level quote; nested quotes are emitted as depth+1 siblings
     };
     struct HRule {};
     // One list item at any nesting level. kind is this entry's own marker

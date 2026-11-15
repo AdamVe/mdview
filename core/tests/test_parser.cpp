@@ -153,6 +153,38 @@ TEST(ParserTest, Parse_NestedLists) {
     EXPECT_EQ(ol.items[0].children[0].kind, 'u'); // sublist kind may differ from parent
 }
 
+TEST(ParserTest, Parse_MultiParagraphBlockQuote) {
+    auto result = parse_markdown("> first para\n>\n> second para\n");
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(result->size(), 1u);
+    ASSERT_EQ(node_type_name((*result)[0]), "BlockQuote");
+    const auto &bq = std::get<BlockQuote>((*result)[0]);
+    EXPECT_EQ(bq.depth, 0);
+    EXPECT_EQ(extract_inline_text(bq.content), "first para\nsecond para");
+}
+
+TEST(ParserTest, Parse_NestedBlockQuotes) {
+    auto result = parse_markdown("> outer\n>\n> > inner\n>\n> > > deepest\n");
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(result->size(), 3u);
+    const auto &outer = std::get<BlockQuote>((*result)[0]);
+    EXPECT_EQ(outer.depth, 0);
+    EXPECT_EQ(extract_inline_text(outer.content), "outer");
+    const auto &inner = std::get<BlockQuote>((*result)[1]);
+    EXPECT_EQ(inner.depth, 1);
+    EXPECT_EQ(extract_inline_text(inner.content), "inner");
+    const auto &deepest = std::get<BlockQuote>((*result)[2]);
+    EXPECT_EQ(deepest.depth, 2); // the intermediate quote holds only this child, so it adds no level of its own
+    EXPECT_EQ(extract_inline_text(deepest.content), "deepest");
+}
+
+TEST(ParserTest, Parse_DeeplyNestedBlockQuotesRejected) {
+    std::string md = std::string(static_cast<size_t>(MAX_LIST_DEPTH) + 2, '>') + " x\n";
+    auto result = parse_markdown(md);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ParserError::MaxDepthExceeded);
+}
+
 TEST(ParserTest, Parse_DeeplyNestedListsRejected) {
     std::string md;
     for (int i = 0; i < MAX_LIST_DEPTH + 2; ++i)
