@@ -21,3 +21,10 @@
 | Row 0 | 981 | -1.55% | dolore aliquip ad amet |
 | Row 1 | 347 | -0.34% | tempor eiusmod amet incididunt |
 | Row 2 | 493 | 3.64% | magna in aute commodo sed |
+
+## Centered and mixed alignment
+
+| lval | cval | rval | dval |
+| :--- | :--: | ---: | ---- |
+| a | mid | 9 | plain |
+| longer-left | x | 100000 | more text here |

@@ -1152,7 +1152,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
             size_t lp = pad / 2 + 1;
             write(Glib::ustring(lp, ' '));
             write_cell_text(text);
-            write(Glib::ustring(pad - lp + 1, ' '));
+            write(Glib::ustring(pad - lp + 2, ' '));
         } else {
             write(" ");
             write_cell_text(text);
@@ -1189,7 +1189,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
                 size_t lp = pad / 2 + 1;
                 write(Glib::ustring(lp, ' '));
                 write_cell_text(text);
-                write(Glib::ustring(pad - lp + 1, ' '));
+                write(Glib::ustring(pad - lp + 2, ' '));
             } else {
                 write(" ");
                 write_cell_text(text);
