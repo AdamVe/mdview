@@ -1836,7 +1836,11 @@ Glib::RefPtr<Gtk::TextTag> MarkdownView::image_line_tag(unsigned id, int nat_w, 
 }
 
 void MarkdownView::apply_image_line_height(Gtk::TextTag &tag, int rendered_height_px) {
-    const int base_h = base_line_height();
+    // line-height is a factor of the line's ACTUAL metrics, and the marker
+    // line's glyphs carry the buffer-wide zoom tag: the effective base grows
+    // with zoom or the reservation drifts from the painted texture (gap when
+    // zooming in, overlap when zooming out).
+    const double base_h = std::max(1.0, static_cast<double>(base_line_height()) * static_cast<double>(m_zoom));
     const double factor = std::min(static_cast<double>(rendered_height_px) / base_h, 8.0);
     const int extra = std::max(0, rendered_height_px - static_cast<int>(std::lround(base_h * factor)));
     tag.property_line_height() = factor;
