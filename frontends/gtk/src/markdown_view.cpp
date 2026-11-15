@@ -465,8 +465,7 @@ void MarkdownView::add_tag(const Glib::ustring &name, const Glib::ustring & /*pr
     } else if (name == "strikethrough") {
         tag->property_strikethrough() = true;
     } else if (name == "inline_code") {
-        tag->property_family() = "monospace";
-        tag->property_scale() = 1.1;
+        tag->property_family() = "monospace"; // deliberately unscaled: 1.1 read as oversized next to prose
     } else if (name == "code_block") {
         tag->property_family() = "monospace";
         tag->property_scale() = 1.1;
@@ -1790,6 +1789,13 @@ void MarkdownView::draw_placeholder(const Glib::RefPtr<Gtk::Snapshot> &snapshot,
     const auto layout = create_pango_layout(
             Glib::ustring(failed ? "Failed to load — click to retry" : "Click to load remote image"));
     const auto host = create_pango_layout(url_host(url));
+    // Buffer text scales via the zoom tag; free-standing layouts must be
+    // sized by hand or the caption stays small while its box grows.
+    auto desc = get_pango_context()->get_font_description();
+    if (desc.get_size() > 0)
+        desc.set_size(static_cast<gint>(desc.get_size() * m_zoom));
+    layout->set_font_description(desc);
+    host->set_font_description(desc);
     int lw = 0;
     int lh = 0;
     layout->get_pixel_size(lw, lh);
