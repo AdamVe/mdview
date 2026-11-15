@@ -171,11 +171,22 @@ int main(int argc, char **argv) {
     }
     g_mdview = argv[1];
     g_fixtures = argv[2];
+    // An explicit test display beats whatever session environment leaked in
+    // (a live desktop's Xwayland may be reachable-but-degraded for sandboxes).
+    if (const char *d = g_getenv("MDVIEW_TEST_DISPLAY")) {
+        g_setenv("DISPLAY", d, TRUE);
+        g_unsetenv("WAYLAND_DISPLAY");
+    }
     // --render-png renders through a real GdkDisplay/GskRenderer pair.
     if (g_getenv("DISPLAY") == nullptr && g_getenv("WAYLAND_DISPLAY") == nullptr) {
         std::printf("SKIP: no DISPLAY or WAYLAND_DISPLAY available\n");
         return 77; // meson treats exit code 77 as "skipped"
     }
+    // Pin the backend when an X display exists: a leaked session environment
+    // (Xwayland + foreign XAUTHORITY + Wayland compositor) otherwise makes
+    // child renders silently degrade instead of failing loudly.
+    if (g_getenv("DISPLAY") != nullptr)
+        g_setenv("GDK_BACKEND", "x11", TRUE);
     Gio::init(); // glibmm wrap tables for subprocess streams
     gtk_init();
     Gtk::init_gtkmm_internals(); // gdkmm wrap tables (GdkPixbuf)
