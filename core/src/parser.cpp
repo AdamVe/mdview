@@ -63,6 +63,7 @@ namespace mdview {
     // Forward declarations
     static std::expected<std::vector<InlineNode>, ParserError> parse_inline_node(cmark_node *node, int depth);
     static std::expected<std::vector<InlineNode>, ParserError> parse_inline_children(cmark_node *node, int depth);
+    static std::expected<std::vector<ListEntry>, ParserError> parse_list_entries(cmark_node *list, int depth);
     static std::expected<DocNode, ParserError> parse_block_node(cmark_node *node);
     static std::expected<std::vector<DocNode>, ParserError> parse_document(cmark_node *root);
 
@@ -126,8 +127,8 @@ namespace mdview {
             auto children_result = parse_inline_children(node, depth + 1);
             if (!children_result) [[unlikely]] {
                 return std::unexpected(children_result.error());
-                }
-            for (auto &child : *children_result) {
+            }
+            for (auto &child: *children_result) {
                 std::visit(
                         [&]<typename T>(T &c) {
                             if constexpr (std::is_same_v<std::decay_t<T>, TextRun>) {
@@ -168,7 +169,7 @@ namespace mdview {
                 auto children_result = parse_inline_children(node, depth + 1);
                 if (!children_result) [[unlikely]] {
                     return std::unexpected(children_result.error());
-                    }
+                }
                 auto &children = *children_result;
                 for (auto &child: children) {
                     std::visit(
@@ -186,7 +187,7 @@ namespace mdview {
                 auto children_result = parse_inline_children(node, depth + 1);
                 if (!children_result) [[unlikely]] {
                     return std::unexpected(children_result.error());
-                    }
+                }
                 auto &children = *children_result;
                 for (auto &child: children) {
                     std::visit(
@@ -204,7 +205,7 @@ namespace mdview {
                 auto children_result = parse_inline_children(node, depth + 1);
                 if (!children_result) [[unlikely]] {
                     return std::unexpected(children_result.error());
-                    }
+                }
                 auto &children = *children_result;
 
                 Link link;
@@ -253,7 +254,7 @@ namespace mdview {
             auto inl_result = parse_inline_node(child, depth + 1);
             if (!inl_result) [[unlikely]] {
                 return std::unexpected(inl_result.error());
-                }
+            }
 
             auto &inl = *inl_result;
             for (auto &inline_node: inl) {
@@ -322,6 +323,83 @@ namespace mdview {
         return true;
     }
 
+    // Marker kind for a whole list: ordered, task (first item has a checkbox),
+    // or plain bullet — same detection rules as before nesting support.
+    static char classify_list_kind(cmark_node *list) {
+        if (cmark_node_get_list_type(list) == CMARK_ORDERED_LIST)
+            return 'o';
+        cmark_node *first_item = cmark_node_first_child(list);
+        if (first_item) {
+            bool completed = false;
+            if (is_extension_task_list_item(first_item, completed) || is_task_list_item(first_item, completed))
+                return 't';
+        }
+        return 'u';
+    }
+
+    // Recursively convert a cmark LIST into ListEntry items, carrying nested
+    // sublists in children instead of dropping them.
+    static std::expected<std::vector<ListEntry>, ParserError> parse_list_entries(cmark_node *list, int depth) {
+        if (depth >= MAX_LIST_DEPTH) [[unlikely]] {
+            return std::unexpected(ParserError::MaxDepthExceeded);
+        }
+        const char kind = classify_list_kind(list);
+        std::vector<ListEntry> entries;
+        for (cmark_node *item = cmark_node_first_child(list); item; item = cmark_node_next(item)) {
+            if (cmark_node_get_type(item) != CMARK_NODE_ITEM) {
+                continue;
+            }
+            ListEntry entry;
+            entry.kind = kind;
+
+            bool completed = false;
+            const bool via_extension = (kind == 't') && is_extension_task_list_item(item, completed);
+            if (kind == 't') {
+                if (!via_extension) {
+                    is_task_list_item(item, completed);
+                }
+                entry.checked = completed;
+            }
+
+            cmark_node *inner = cmark_node_first_child(item);
+            if (kind == 't' && !via_extension) {
+                // Legacy path: skip the "[x]" text marker before the paragraph
+                int skipped = 0;
+                while (inner && skipped < 2) {
+                    cmark_node_type t = cmark_node_get_type(inner);
+                    if (t == CMARK_NODE_TEXT || t == CMARK_NODE_EMPH || t == CMARK_NODE_STRONG) {
+                        skipped++;
+                    }
+                    inner = cmark_node_next(inner);
+                }
+            }
+            while (inner) {
+                if (cmark_node_get_type(inner) == CMARK_NODE_PARAGRAPH) {
+                    auto content_result = parse_inline_children(inner, 0);
+                    if (!content_result) [[unlikely]] {
+                        return std::unexpected(content_result.error());
+                    }
+                    entry.content = std::move(*content_result);
+                    break;
+                }
+                inner = cmark_node_next(inner);
+            }
+
+            for (cmark_node *child = cmark_node_first_child(item); child; child = cmark_node_next(child)) {
+                if (cmark_node_get_type(child) == CMARK_NODE_LIST) {
+                    auto sub = parse_list_entries(child, depth + 1);
+                    if (!sub) [[unlikely]] {
+                        return std::unexpected(sub.error());
+                    }
+                    entry.children.insert(entry.children.end(), std::make_move_iterator(sub->begin()),
+                                          std::make_move_iterator(sub->end()));
+                }
+            }
+            entries.push_back(std::move(entry));
+        }
+        return entries;
+    }
+
     // Parse a single block node (heading, paragraph, code block, etc.)
     static std::expected<DocNode, ParserError> parse_block_node(cmark_node *node) {
         // Extension node types have no public enum values; match by type name.
@@ -345,7 +423,7 @@ namespace mdview {
                             auto content_result = parse_inline_children(cell_child, 0);
                             if (!content_result) [[unlikely]] {
                                 return std::unexpected(content_result.error());
-                                }
+                            }
                             row_cells.push_back({std::move(*content_result)});
                         }
                         cell_child = cmark_node_next(cell_child);
@@ -369,7 +447,7 @@ namespace mdview {
                 auto content_result = parse_inline_children(node, 0);
                 if (!content_result) [[unlikely]] {
                     return std::unexpected(content_result.error());
-                    }
+                }
                 heading.content = std::move(*content_result);
                 return heading;
             }
@@ -379,7 +457,7 @@ namespace mdview {
                 auto content_result = parse_inline_children(node, 0);
                 if (!content_result) [[unlikely]] {
                     return std::unexpected(content_result.error());
-                    }
+                }
                 para.content = std::move(*content_result);
                 return para;
             }
@@ -398,7 +476,7 @@ namespace mdview {
                     auto content_result = parse_inline_children(first_child, 0);
                     if (!content_result) [[unlikely]] {
                         return std::unexpected(content_result.error());
-                        }
+                    }
                     bq.content = std::move(*content_result);
                 }
                 return bq;
@@ -409,110 +487,13 @@ namespace mdview {
             }
 
             case CMARK_NODE_LIST: {
-                cmark_list_type list_type = cmark_node_get_list_type(node);
-
-                if (list_type == CMARK_BULLET_LIST) {
-                    cmark_node *first_item = cmark_node_first_child(node);
-                    bool is_task_list = false;
-                    if (first_item) {
-                        bool completed;
-                        is_task_list = is_extension_task_list_item(first_item, completed) ||
-                                       is_task_list_item(first_item, completed);
-                    }
-
-                    if (is_task_list) {
-                        TaskList tlist;
-                        cmark_node *item = cmark_node_first_child(node);
-
-                        while (item) {
-                            bool completed = false;
-                            const bool via_extension = is_extension_task_list_item(item, completed);
-                            if (!via_extension) {
-                                is_task_list_item(item, completed);
-                            }
-
-                            std::vector<InlineNode> item_content;
-                            cmark_node *inner = cmark_node_first_child(item);
-
-                            if (!via_extension) {
-                                // Legacy path: skip the "[x]" text marker before the paragraph
-                                int skipped = 0;
-                                while (inner && skipped < 2) {
-                                    cmark_node_type t = cmark_node_get_type(inner);
-                                    if (t == CMARK_NODE_TEXT || t == CMARK_NODE_EMPH || t == CMARK_NODE_STRONG) {
-                                        skipped++;
-                                    }
-                                    inner = cmark_node_next(inner);
-                                }
-                            }
-
-                            while (inner) {
-                                if (cmark_node_get_type(inner) == CMARK_NODE_PARAGRAPH) {
-                                    auto content_result = parse_inline_children(inner, 0);
-                                    if (!content_result) [[unlikely]] {
-                                        return std::unexpected(content_result.error());
-                                        }
-                                    item_content = std::move(*content_result);
-                                    break;
-                                }
-                                inner = cmark_node_next(inner);
-                            }
-                            tlist.items.emplace_back(completed, std::move(item_content));
-                            item = cmark_node_next(item);
-                        }
-                        return tlist;
-                    } else {
-                        BulletList blist;
-                        cmark_node *item = cmark_node_first_child(node);
-
-                        while (item) {
-                            std::vector<InlineNode> item_content;
-                            cmark_node *inner = cmark_node_first_child(item);
-
-                            while (inner) {
-                                if (cmark_node_get_type(inner) == CMARK_NODE_PARAGRAPH) {
-                                    auto content_result = parse_inline_children(inner, 0);
-                                    if (!content_result) [[unlikely]] {
-                                        return std::unexpected(content_result.error());
-                                        }
-                                    item_content = std::move(*content_result);
-                                    break;
-                                }
-                                inner = cmark_node_next(inner);
-                            }
-                            blist.items.push_back(std::move(item_content));
-                            item = cmark_node_next(item);
-                        }
-                        return blist;
-                    }
-                } else if (list_type == CMARK_ORDERED_LIST) {
-                    OrderedList olist;
-                    cmark_node *item = cmark_node_first_child(node);
-
-                    while (item) {
-                        std::vector<InlineNode> item_content;
-                        cmark_node *inner = cmark_node_first_child(item);
-
-                        while (inner) {
-                            if (cmark_node_get_type(inner) == CMARK_NODE_PARAGRAPH) {
-                                auto content_result = parse_inline_children(inner, 0);
-                                if (!content_result) [[unlikely]] {
-                                    return std::unexpected(content_result.error());
-                                    }
-                                item_content = std::move(*content_result);
-                                break;
-                            }
-                            inner = cmark_node_next(inner);
-                        }
-                        olist.items.push_back(std::move(item_content));
-                        item = cmark_node_next(item);
-                    }
-                    return olist;
+                List list;
+                auto entries = parse_list_entries(node, 0);
+                if (!entries) [[unlikely]] {
+                    return std::unexpected(entries.error());
                 }
-
-                // Fallback for unknown list types
-                Paragraph para;
-                return para;
+                list.items = std::move(*entries);
+                return list;
             }
 
             default: {
@@ -532,11 +513,9 @@ namespace mdview {
     }
 
     // Check if a node is a thematic break
-    static bool is_thematic_break(cmark_node *node) {
-        return cmark_node_get_type(node) == CMARK_NODE_THEMATIC_BREAK;
-    }
+    static bool is_thematic_break(cmark_node *node) { return cmark_node_get_type(node) == CMARK_NODE_THEMATIC_BREAK; }
 
-   // Parse all document nodes with YAML front matter detection
+    // Parse all document nodes with YAML front matter detection
     static std::expected<std::vector<DocNode>, ParserError> parse_document(cmark_node *root) {
         std::vector<DocNode> result;
         cmark_node *child = cmark_node_first_child(root);
@@ -554,8 +533,8 @@ namespace mdview {
                 child = cmark_node_next(child);
                 continue;
             }
-            
-           // Check for --- boundaries front matter
+
+            // Check for --- boundaries front matter
             if (is_thematic_break(child)) {
                 if (!first_thematic_break_seen && !content_started) {
                     // First --- seen at start of document, start buffering
@@ -578,7 +557,7 @@ namespace mdview {
                 auto block_result = parse_block_node(child);
                 if (!block_result) [[unlikely]] {
                     return std::unexpected(block_result.error());
-                    }
+                }
                 // Check if this is a setext heading (level=2) that represents YAML front matter
                 // In this case, we should NOT buffer it, and we should exit front matter mode
                 if (std::holds_alternative<Heading>(*block_result)) {
@@ -603,7 +582,7 @@ namespace mdview {
             auto block_result = parse_block_node(child);
             if (!block_result) [[unlikely]] {
                 return std::unexpected(block_result.error());
-                }
+            }
             result.push_back(std::move(*block_result));
             content_started = true;
             child = cmark_node_next(child);
@@ -663,7 +642,7 @@ namespace mdview {
         cmark_node_free(root);
 
         if (!result) {
-            return std::unexpected<ParserError>(ParserError::InternalError);
+            return std::unexpected(result.error()); // preserve the real failure reason
         }
         return std::move(*result);
     }

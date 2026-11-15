@@ -10,14 +10,14 @@ using ::testing::ContainsRegex;
 // Helper: extract text from inline nodes
 static std::string extract_inline_text(const std::vector<InlineNode> &nodes) {
     std::string result;
-    for (const auto &node : nodes) {
+    for (const auto &node: nodes) {
         std::visit(
-            [&result](const auto &n) {
-                if constexpr (std::is_same_v<std::decay_t<decltype(n)>, TextRun>) {
-                    result += n.text;
-                }
-            },
-            node);
+                [&result](const auto &n) {
+                    if constexpr (std::is_same_v<std::decay_t<decltype(n)>, TextRun>) {
+                        result += n.text;
+                    }
+                },
+                node);
     }
     return result;
 }
@@ -26,9 +26,10 @@ static std::string extract_inline_text(const std::vector<InlineNode> &nodes) {
 
 // Helper: check if a TextRun has strikethrough set
 static bool has_strikethrough(const std::vector<InlineNode> &nodes) {
-    for (const auto &node : nodes) {
+    for (const auto &node: nodes) {
         if (const auto *tr = std::get_if<TextRun>(&node)) {
-            if (tr->strikethrough) return true;
+            if (tr->strikethrough)
+                return true;
         }
     }
     return false;
@@ -36,9 +37,10 @@ static bool has_strikethrough(const std::vector<InlineNode> &nodes) {
 
 // Helper: check if a TextRun has bold set
 static bool has_bold(const std::vector<InlineNode> &nodes) {
-    for (const auto &node : nodes) {
+    for (const auto &node: nodes) {
         if (const auto *tr = std::get_if<TextRun>(&node)) {
-            if (tr->bold) return true;
+            if (tr->bold)
+                return true;
         }
     }
     return false;
@@ -48,19 +50,24 @@ static bool has_bold(const std::vector<InlineNode> &nodes) {
 static std::string node_type_name(const DocNode &node) {
     std::string result;
     std::visit(
-        [&result](const auto &n) {
-            using T = std::decay_t<decltype(n)>;
-            if constexpr (std::is_same_v<T, Heading>) result = "Heading";
-            else if constexpr (std::is_same_v<T, Paragraph>) result = "Paragraph";
-            else if constexpr (std::is_same_v<T, CodeBlock>) result = "CodeBlock";
-            else if constexpr (std::is_same_v<T, BlockQuote>) result = "BlockQuote";
-            else if constexpr (std::is_same_v<T, HRule>) result = "HRule";
-            else if constexpr (std::is_same_v<T, BulletList>) result = "BulletList";
-            else if constexpr (std::is_same_v<T, OrderedList>) result = "OrderedList";
-            else if constexpr (std::is_same_v<T, TaskList>) result = "TaskList";
-            else if constexpr (std::is_same_v<T, Table>) result = "Table";
-        },
-        node);
+            [&result](const auto &n) {
+                using T = std::decay_t<decltype(n)>;
+                if constexpr (std::is_same_v<T, Heading>)
+                    result = "Heading";
+                else if constexpr (std::is_same_v<T, Paragraph>)
+                    result = "Paragraph";
+                else if constexpr (std::is_same_v<T, CodeBlock>)
+                    result = "CodeBlock";
+                else if constexpr (std::is_same_v<T, BlockQuote>)
+                    result = "BlockQuote";
+                else if constexpr (std::is_same_v<T, HRule>)
+                    result = "HRule";
+                else if constexpr (std::is_same_v<T, List>)
+                    result = "List";
+                else if constexpr (std::is_same_v<T, Table>)
+                    result = "Table";
+            },
+            node);
     return result;
 }
 
@@ -107,10 +114,11 @@ TEST(ParserTest, Parse_BulletList) {
     auto result = parse_markdown(md);
     ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result.value().size(), 1u);
-    const auto &bl = std::get<BulletList>(result.value()[0]);
+    const auto &bl = std::get<List>(result.value()[0]);
     EXPECT_EQ(bl.items.size(), 2u);
-    EXPECT_EQ(extract_inline_text(bl.items[0]), "item 1");
-    EXPECT_EQ(extract_inline_text(bl.items[1]), "item 2");
+    EXPECT_EQ(bl.items[0].kind, 'u');
+    EXPECT_EQ(extract_inline_text(bl.items[0].content), "item 1");
+    EXPECT_EQ(extract_inline_text(bl.items[1].content), "item 2");
 }
 
 TEST(ParserTest, Parse_TaskList) {
@@ -118,15 +126,42 @@ TEST(ParserTest, Parse_TaskList) {
     auto result = parse_markdown(md);
     ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result.value().size(), 1u);
-    ASSERT_EQ(node_type_name(result.value()[0]), "TaskList");
-    const auto &tl = std::get<TaskList>(result.value()[0]);
+    ASSERT_EQ(node_type_name(result.value()[0]), "List");
+    const auto &tl = std::get<List>(result.value()[0]);
     ASSERT_EQ(tl.items.size(), 2u);
-    EXPECT_TRUE(tl.items[0].completed);
-    EXPECT_FALSE(tl.items[1].completed);
-    // The "[x]"/"[ ]" marker must not leak into the rendered content
+    EXPECT_EQ(tl.items[0].kind, 't');
+    EXPECT_TRUE(tl.items[0].checked);
     EXPECT_EQ(extract_inline_text(tl.items[0].content), "done thing");
+    EXPECT_FALSE(tl.items[1].checked);
     EXPECT_EQ(extract_inline_text(tl.items[1].content), "todo thing");
 }
+
+TEST(ParserTest, Parse_NestedLists) {
+    const auto result = parse_markdown("- top\n  - child\n    - grandchild\n1. ord\n   - sub bullet\n");
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(result->size(), 2u);
+    const auto &ul = std::get<List>((*result)[0]);
+    ASSERT_EQ(ul.items.size(), 1u);
+    EXPECT_EQ(ul.items[0].kind, 'u');
+    ASSERT_EQ(ul.items[0].children.size(), 1u);
+    ASSERT_EQ(ul.items[0].children[0].children.size(), 1u);
+    EXPECT_EQ(extract_inline_text(ul.items[0].children[0].children[0].content), "grandchild");
+    const auto &ol = std::get<List>((*result)[1]);
+    ASSERT_EQ(ol.items.size(), 1u);
+    EXPECT_EQ(ol.items[0].kind, 'o');
+    ASSERT_EQ(ol.items[0].children.size(), 1u);
+    EXPECT_EQ(ol.items[0].children[0].kind, 'u'); // sublist kind may differ from parent
+}
+
+TEST(ParserTest, Parse_DeeplyNestedListsRejected) {
+    std::string md;
+    for (int i = 0; i < MAX_LIST_DEPTH + 2; ++i)
+        md += std::string(static_cast<size_t>(i) * 2, ' ') + "- x\n";
+    auto result = parse_markdown(md);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ParserError::MaxDepthExceeded);
+}
+
 
 TEST(ParserTest, Parse_Link_KeepsRelativeAndAnchorUrls) {
     std::string md = "See [sibling](./other.md) and [top](#heading).\n";
@@ -196,21 +231,25 @@ TEST(ParserTest, Parse_MaxDepthExceeded) {
     // check is a safety net for pathological inputs that cmark somehow parses.
     // This test verifies the parser handles deep nesting without crashing.
     std::string md;
-    for (int i = 0; i < 50; ++i) md += "***";
+    for (int i = 0; i < 50; ++i)
+        md += "***";
     md += "text";
-    for (int i = 0; i < 50; ++i) md += "***";
+    for (int i = 0; i < 50; ++i)
+        md += "***";
     auto result = parse_markdown(md);
     // cmark truncates deeply nested emphasis; we just verify no crash/OOM
-    (void)result;
+    (void) result;
 }
 
 
 TEST(ParserTest, Parse_WithinDepthLimit) {
     // 10 levels of *** should be fine (limit is 32)
     std::string md;
-    for (int i = 0; i < 10; ++i) md += "***";
+    for (int i = 0; i < 10; ++i)
+        md += "***";
     md += "text";
-    for (int i = 0; i < 10; ++i) md += "***";
+    for (int i = 0; i < 10; ++i)
+        md += "***";
     auto result = parse_markdown(md);
     ASSERT_TRUE(result.has_value());
 }
@@ -418,10 +457,12 @@ Normal paragraph.
 
     // Check that we have headings and a paragraph somewhere
     bool found_heading = false, found_para = false;
-    for (const auto &node : result.value()) {
+    for (const auto &node: result.value()) {
         std::string t = node_type_name(node);
-        if (t == "Heading") found_heading = true;
-        if (t == "Paragraph") found_para = true;
+        if (t == "Heading")
+            found_heading = true;
+        if (t == "Paragraph")
+            found_para = true;
     }
     EXPECT_TRUE(found_heading);
     EXPECT_TRUE(found_para);
@@ -432,13 +473,21 @@ Normal paragraph.
     bool found_bullet = false;
     bool found_ordered = false;
     bool found_table = false;
-    for (const auto &node : result.value()) {
+    for (const auto &node: result.value()) {
         std::string t = node_type_name(node);
-        if (t == "BlockQuote") found_quote = true;
-        if (t == "HRule") found_hr = true;
-        if (t == "BulletList") found_bullet = true;
-        if (t == "OrderedList") found_ordered = true;
-        if (t == "Table") found_table = true;
+        if (t == "BlockQuote")
+            found_quote = true;
+        if (t == "HRule")
+            found_hr = true;
+        if (t == "List") {
+            const auto &l = std::get<List>(node);
+            if (!l.items.empty() && l.items[0].kind == 'u')
+                found_bullet = true;
+            if (!l.items.empty() && l.items[0].kind == 'o')
+                found_ordered = true;
+        }
+        if (t == "Table")
+            found_table = true;
     }
     EXPECT_TRUE(found_quote);
     EXPECT_TRUE(found_hr);
@@ -483,7 +532,7 @@ TEST(ParserTest, Parse_WhitespaceOnly) {
     ASSERT_TRUE(result.has_value());
     // cmark may or may not produce nodes for whitespace-only input
     // Just ensure it doesn't crash
-    (void)result.value().size();
+    (void) result.value().size();
 }
 
 TEST(ParserTest, Parse_MalformedMarkdown) {
@@ -511,8 +560,10 @@ TEST(ParserTest, Parse_MultipleLinks) {
     std::string url_a, url_b;
     for (const auto &node: para.content) {
         if (const auto *link = std::get_if<Link>(&node)) {
-            if (link->text == "a") url_a = link->url;
-            if (link->text == "b") url_b = link->url;
+            if (link->text == "a")
+                url_a = link->url;
+            if (link->text == "b")
+                url_b = link->url;
         }
     }
     EXPECT_EQ(url_a, "https://a.com");

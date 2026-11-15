@@ -43,7 +43,7 @@ Renders the full document height to a PNG via snapshot + GskRenderer (cairo back
 - `frontends/gtk/src/markdown_view.cpp` — DocModel → GtkTextBuffer rendering
 
 ### Key types
-- `DocModel` = `std::vector<DocNode>` where `DocNode` is a `std::variant` of block types (Heading, Paragraph, CodeBlock, BlockQuote, HRule, BulletList, OrderedList, TaskList, Table)
+- `DocModel` = `std::vector<DocNode>` where `DocNode` is a `std::variant` of block types (Heading, Paragraph, CodeBlock, BlockQuote, HRule, List, Table); `List` items are recursive (`ListEntry`: content, marker kind 'u'/'o'/'t', checked flag, children) so nested lists render at any depth
 - `InlineNode` = `std::variant<TextRun, Link, Image>` where TextRun carries bold/italic/code/strikethrough flags;
   Image is rendered on its own line (reserved via a line-height tag, painted in `MarkdownView::snapshot_vfunc`);
   http(s) images are lazy (click-to-load placeholder, see `pending_image_at_point` / `load_remote_image`)

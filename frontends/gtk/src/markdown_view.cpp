@@ -554,12 +554,8 @@ void MarkdownView::record_block(int start, int end, const mdview::DocNode &node)
                     record_lines(start, end, LineKind::BlockQuote);
                 } else if constexpr (std::is_same_v<U, mdview::HRule>) {
                     record_lines(start, end, LineKind::HRule);
-                } else if constexpr (std::is_same_v<U, mdview::BulletList>) {
-                    record_lines(start, end, LineKind::BulletItem);
-                } else if constexpr (std::is_same_v<U, mdview::OrderedList>) {
-                    record_lines(start, end, LineKind::OrderedItem);
-                } else if constexpr (std::is_same_v<U, mdview::TaskList>) {
-                    record_lines(start, end, LineKind::TaskItem);
+                } else if constexpr (std::is_same_v<U, mdview::List>) {
+                    record_lines(start, end, LineKind::ListItem);
                 } else if constexpr (std::is_same_v<U, mdview::Table>) {
                     record_lines(start, end, LineKind::TableLine);
                 }
@@ -607,21 +603,20 @@ void MarkdownView::style_block_range(int start, int end, const mdview::DocNode &
             m_buffer->apply_tag(tag, s, e);
     };
     std::visit(
-        [&](const auto &n) {
-            using T = std::decay_t<decltype(n)>;
-            if constexpr (std::is_same_v<T, mdview::Paragraph>) {
+            [&](const auto &n) {
+                using T = std::decay_t<decltype(n)>;
+                if constexpr (std::is_same_v<T, mdview::Paragraph>) {
                     apply("body");
                     apply("para_gap");
-                } else if constexpr (std::is_same_v<T, mdview::BulletList> || std::is_same_v<T, mdview::OrderedList> ||
-                                     std::is_same_v<T, mdview::TaskList>) {
+                } else if constexpr (std::is_same_v<T, mdview::List>) {
                     apply("body");
                     apply("list_gap");
                 } else if constexpr (std::is_same_v<T, mdview::BlockQuote>) {
                     apply("body");
                     apply("quote_gap");
                 }
-        },
-        node);
+            },
+            node);
 }
 
 // Image marker lines carry an exact line-height factor; body leading would
@@ -757,47 +752,51 @@ void MarkdownView::insert_node(const mdview::HRule & /*hr*/, Gtk::TextIter &iter
     iter = m_buffer->insert(iter, "\n");
 }
 
-void MarkdownView::insert_node(const mdview::BulletList &bl, Gtk::TextIter &iter) {
+Glib::RefPtr<Gtk::TextTag> MarkdownView::list_tag(int depth) {
+    // Depth 0 reuses the classic "bullet" tag (kept current by update_list_indent);
+    // deeper levels get lazily created "bullet-dN" siblings with proportional margins.
+    const Glib::ustring name = depth == 0 ? Glib::ustring("bullet") : Glib::ustring("bullet-d" + std::to_string(depth));
+    if (const auto existing = m_tag_table->lookup(name))
+        return existing;
+    const auto tag = Gtk::TextTag::create(name);
+    m_tag_table->add(tag);
+    const int extra = static_cast<int>(m_base_indent * m_zoom);
+    tag->property_left_margin() = m_measure_margin + extra * (depth + 1);
+    tag->property_indent() = extra;
+    return tag;
+}
+
+void MarkdownView::insert_node(const mdview::List &list, Gtk::TextIter &iter) {
     update_list_indent();
-    const auto tag = m_tag_table->lookup("bullet");
+    insert_list_entries(list.items, iter, 0);
+}
 
-    for (const auto &item: bl.items) {
-        iter = m_buffer->insert_with_tags(iter, Glib::ustring("• "), {tag});
+void MarkdownView::insert_list_entries(const std::vector<mdview::ListEntry> &entries, Gtk::TextIter &iter, int depth) {
+    const auto tag = list_tag(depth);
 
-        for (const auto &inline_node: item) {
+    int number = 1;
+    for (const auto &entry: entries) {
+        Glib::ustring marker;
+        switch (entry.kind) {
+            case 'o':
+                marker = std::format("{}. ", number++);
+                break;
+            case 't':
+                marker = entry.checked ? "\u2611 " : "\u2610 "; // ballot box with / without X
+                break;
+            default:
+                marker = "\u2022 ";
+                break;
+        }
+        iter = m_buffer->insert_with_tags(iter, marker, {tag});
+
+        for (const auto &inline_node: entry.content) {
             std::visit([this, &iter, &tag](const auto &inl) { insert_inline(inl, iter, tag); }, inline_node);
         }
         iter = m_buffer->insert(iter, "\n");
-    }
-}
 
-void MarkdownView::insert_node(const mdview::OrderedList &ol, Gtk::TextIter &iter) {
-    update_list_indent();
-    const auto tag = m_tag_table->lookup("bullet");
-
-    int num = 1;
-    for (const auto &item: ol.items) {
-        Glib::ustring number = std::to_string(num++) + ". ";
-        iter = m_buffer->insert_with_tags(iter, number, {tag});
-
-        for (const auto &inline_node: item) {
-            std::visit([this, &iter, &tag](const auto &inl) { insert_inline(inl, iter, tag); }, inline_node);
-        }
-        iter = m_buffer->insert(iter, "\n");
-    }
-}
-
-void MarkdownView::insert_node(const mdview::TaskList &tl, Gtk::TextIter &iter) {
-    for (const auto &item: tl.items) {
-        const char marker = item.completed ? 'x' : ' ';
-        iter = m_buffer->insert(iter, "[");
-        iter = m_buffer->insert(iter, Glib::ustring(1, marker));
-        iter = m_buffer->insert(iter, "] ");
-
-        for (const auto &inline_node: item.content) {
-            std::visit([this, &iter](const auto &inl) { insert_inline(inl, iter); }, inline_node);
-        }
-        iter = m_buffer->insert(iter, "\n");
+        if (!entry.children.empty())
+            insert_list_entries(entry.children, iter, depth + 1);
     }
 }
 
@@ -1657,8 +1656,8 @@ void MarkdownView::draw_placeholder(const Glib::RefPtr<Gtk::Snapshot> &snapshot,
     snapshot->append_color(border, Gdk::Graphene::Rect(0, 0, 1, h));
     snapshot->append_color(border, Gdk::Graphene::Rect(w - 1, 0, 1, h));
 
-    const auto layout =
-            create_pango_layout(Glib::ustring(failed ? "Failed to load — click to retry" : "Click to load remote image"));
+    const auto layout = create_pango_layout(
+            Glib::ustring(failed ? "Failed to load — click to retry" : "Click to load remote image"));
     const auto host = create_pango_layout(url_host(url));
     int lw = 0;
     int lh = 0;
@@ -1943,28 +1942,23 @@ void MarkdownView::setup_search_colors() {
                 return Glib::ustring(oss.str());
             };
 
-            Glib::ustring bg_hex = Glib::ustring::format(
-                "#", to_hex(selected_bg.get_red()), to_hex(selected_bg.get_green()), to_hex(selected_bg.get_blue())
-            );
+            Glib::ustring bg_hex =
+                    Glib::ustring::format("#", to_hex(selected_bg.get_red()), to_hex(selected_bg.get_green()),
+                                          to_hex(selected_bg.get_blue()));
 
-            Glib::ustring fg_hex = Glib::ustring::format(
-                "#", to_hex(selected_fg.get_red()), to_hex(selected_fg.get_green()), to_hex(selected_fg.get_blue())
-            );
+            Glib::ustring fg_hex =
+                    Glib::ustring::format("#", to_hex(selected_fg.get_red()), to_hex(selected_fg.get_green()),
+                                          to_hex(selected_fg.get_blue()));
 
             current_tag->property_background() = bg_hex;
             current_tag->property_foreground() = fg_hex;
 
             Gdk::RGBA dimmed_bg;
-            dimmed_bg.set_rgba(
-                selected_bg.get_red() * 0.6,
-                selected_bg.get_green() * 0.6,
-                selected_bg.get_blue() * 0.6,
-                selected_bg.get_alpha()
-            );
+            dimmed_bg.set_rgba(selected_bg.get_red() * 0.6, selected_bg.get_green() * 0.6, selected_bg.get_blue() * 0.6,
+                               selected_bg.get_alpha());
 
             Glib::ustring dimmed_hex = Glib::ustring::format(
-                "#", to_hex(dimmed_bg.get_red()), to_hex(dimmed_bg.get_green()), to_hex(dimmed_bg.get_blue())
-            );
+                    "#", to_hex(dimmed_bg.get_red()), to_hex(dimmed_bg.get_green()), to_hex(dimmed_bg.get_blue()));
 
             highlight_tag->property_background() = dimmed_hex;
             highlight_tag->property_foreground() = fg_hex;
@@ -1972,9 +1966,7 @@ void MarkdownView::setup_search_colors() {
     }
 }
 
-void MarkdownView::update_search_colors() {
-    setup_search_colors();
-}
+void MarkdownView::update_search_colors() { setup_search_colors(); }
 
 void MarkdownView::update_list_indent() {
     const int extra = static_cast<int>(m_base_indent * m_zoom);
@@ -1983,6 +1975,13 @@ void MarkdownView::update_list_indent() {
             tag->property_left_margin() = m_measure_margin + extra;
             tag->property_indent() = extra;
         }
+    }
+    for (int depth = 1;; ++depth) {
+        const auto tag = m_tag_table->lookup("bullet-d" + std::to_string(depth));
+        if (!tag)
+            break;
+        tag->property_left_margin() = m_measure_margin + extra * (depth + 1);
+        tag->property_indent() = extra;
     }
 }
 
@@ -2651,10 +2650,16 @@ Glib::ustring MarkdownView::build_markdown(const Gtk::TextConstIter &sel_start,
                         std::from_chars(info.info.data(), info.info.data() + info.info.size(), level).ec != std::errc{})
                         level = 1;
                     prefix = std::string(static_cast<size_t>(std::clamp(level, 1, 4)), '#') + " ";
-                } else if (info.kind == LineKind::BulletItem) {
+                } else if (info.kind == LineKind::ListItem) {
                     prefix = "- ";
-                    if (std::string_view(body.raw()).starts_with("\u2022 "))
-                        body = body.substr(4); // strip rendered "• " marker
+                    const std::string_view text = body.raw();
+                    if (text.starts_with("\u2022 ") || text.starts_with("\u2611 ") || text.starts_with("\u2610 "))
+                        body = body.substr(4); // strip rendered "• "/"☑ "/"\u2610 " marker
+                    else if (const auto dot = text.find(". ");
+                             dot != std::string_view::npos && dot <= 2 &&
+                             std::all_of(text.begin(), text.begin() + static_cast<long>(dot),
+                                         [](char ch) { return ch >= '0' && ch <= '9'; }))
+                        body = body.substr(dot + 2); // strip rendered "N. " marker
                 } else if (info.kind == LineKind::BlockQuote) {
                     prefix = "> ";
                 }

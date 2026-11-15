@@ -40,18 +40,17 @@ namespace mdview {
         std::vector<InlineNode> content;
     };
     struct HRule {};
-    struct BulletList {
-        std::vector<std::vector<InlineNode>> items;
+    // One list item at any nesting level. kind is this entry's own marker
+    // ('u' bullet, 'o' ordered, 't' task) so a sublist may differ from its
+    // parent ("- item\n  1. nested"); children holds deeper levels verbatim.
+    struct ListEntry {
+        std::vector<InlineNode> content;
+        char kind = 'u';
+        bool checked = false; // meaningful when kind == 't'
+        std::vector<ListEntry> children;
     };
-    struct OrderedList {
-        std::vector<std::vector<InlineNode>> items;
-    };
-    struct TaskList {
-        struct Item {
-            bool completed;
-            std::vector<InlineNode> content;
-        };
-        std::vector<Item> items;
+    struct List {
+        std::vector<ListEntry> items;
     };
     struct TableCell {
         std::vector<InlineNode> content;
@@ -62,10 +61,16 @@ namespace mdview {
         std::vector<char> alignments;
     };
 
-    enum class ParserError { InvalidInput, InternalError, MalformedInline, UnexpectedNode, InputTooLarge, MaxDepthExceeded };
+    enum class ParserError {
+        InvalidInput,
+        InternalError,
+        MalformedInline,
+        UnexpectedNode,
+        InputTooLarge,
+        MaxDepthExceeded
+    };
 
-    using DocNode =
-            std::variant<Heading, Paragraph, CodeBlock, BlockQuote, HRule, BulletList, OrderedList, TaskList, Table>;
+    using DocNode = std::variant<Heading, Paragraph, CodeBlock, BlockQuote, HRule, List, Table>;
 
     using DocModel = std::vector<DocNode>;
 

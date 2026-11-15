@@ -72,18 +72,7 @@ protected:
     void snapshot_vfunc(const Glib::RefPtr<Gtk::Snapshot> &snapshot) override;
 
 private:
-    enum class LineKind {
-        Paragraph,
-        Heading,
-        CodeLang,
-        CodeLine,
-        BlockQuote,
-        HRule,
-        BulletItem,
-        OrderedItem,
-        TaskItem,
-        TableLine
-    };
+    enum class LineKind { Paragraph, Heading, CodeLang, CodeLine, BlockQuote, HRule, ListItem, TableLine };
     struct LineInfo {
         LineKind kind = LineKind::Paragraph;
         std::string info; // heading level or code fence language
@@ -122,9 +111,9 @@ private:
     void paint_copy_icons(const Glib::RefPtr<Gtk::Snapshot> &snapshot);
     void insert_node(const mdview::BlockQuote &bq, Gtk::TextIter &iter);
     void insert_node(const mdview::HRule &hr, Gtk::TextIter &iter) const;
-    void insert_node(const mdview::BulletList &bl, Gtk::TextIter &iter);
-    void insert_node(const mdview::OrderedList &ol, Gtk::TextIter &iter);
-    void insert_node(const mdview::TaskList &tl, Gtk::TextIter &iter);
+    void insert_node(const mdview::List &list, Gtk::TextIter &iter);
+    void insert_list_entries(const std::vector<mdview::ListEntry> &entries, Gtk::TextIter &iter, int depth);
+    Glib::RefPtr<Gtk::TextTag> list_tag(int depth);
     void insert_node(const mdview::Table &t, Gtk::TextIter &iter);
 
     void apply_zoom();

@@ -10,6 +10,7 @@ namespace mdview {
     // zoom rebuilds comfortably interactive without any virtualization.
     constexpr size_t MAX_INPUT_SIZE = 2 * 1024 * 1024; // 2 MB
     constexpr int MAX_INLINE_DEPTH = 32;
+    constexpr int MAX_LIST_DEPTH = 16;
 
     [[nodiscard]] std::expected<DocModel, ParserError> parse_markdown(const std::string &markdown_text);
 
