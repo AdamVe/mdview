@@ -153,6 +153,17 @@ namespace mdview {
                 return std::vector<InlineNode>{run};
             }
 
+            case CMARK_NODE_SOFTBREAK:
+                // cmark splits paragraph text at every source newline; without
+                // an explicit joiner the fragments weld together ("foo␊bar"
+                // rendered as "foobar"). A plain space keeps soft-wrapped
+                // sources reading correctly; the view wraps naturally anyway.
+                return std::vector<InlineNode>{TextRun{.text = " "}};
+
+            case CMARK_NODE_LINEBREAK:
+                // Trailing-double-space / backslash break: honour it literally.
+                return std::vector<InlineNode>{TextRun{.text = "\n"}};
+
             case CMARK_NODE_EMPH: {
                 auto children_result = parse_inline_children(node, depth + 1);
                 if (!children_result) [[unlikely]] {

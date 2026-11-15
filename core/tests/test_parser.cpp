@@ -90,6 +90,18 @@ TEST(ParserTest, Parse_CodeBlock) {
     EXPECT_EQ(cb.code, "print('hello')\n");
 }
 
+TEST(ParserTest, Parse_SoftAndHardBreaks) {
+    const auto soft = parse_markdown("foo bar\nbaz **q** end\n");
+    ASSERT_TRUE(soft.has_value());
+    ASSERT_EQ(soft->size(), 1u);
+    EXPECT_EQ(extract_inline_text(std::get<Paragraph>((*soft)[0]).content), "foo bar baz q end");
+
+    const auto hard = parse_markdown("line one\\\nline two\n");
+    ASSERT_TRUE(hard.has_value());
+    ASSERT_EQ(hard->size(), 1u);
+    EXPECT_EQ(extract_inline_text(std::get<Paragraph>((*hard)[0]).content), "line one\nline two");
+}
+
 TEST(ParserTest, Parse_BulletList) {
     std::string md = "- item 1\n- item 2\n";
     auto result = parse_markdown(md);
