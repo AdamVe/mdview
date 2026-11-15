@@ -110,6 +110,8 @@ private:
     int copy_icon_at_point(double x, double y) const;
     void paint_copy_icons(const Glib::RefPtr<Gtk::Snapshot> &snapshot);
     void paint_quote_bars(const Glib::RefPtr<Gtk::Snapshot> &snapshot);
+    int ink_overhang_px();
+    int quote_pad();
     void insert_node(const mdview::BlockQuote &bq, Gtk::TextIter &iter);
     void insert_node(const mdview::HRule &hr, Gtk::TextIter &iter) const;
     Glib::RefPtr<Gtk::TextTag> quote_tag(int depth);
@@ -141,6 +143,8 @@ private:
     };
     std::vector<RhythmTag> m_rhythm_tags;
     Glib::RefPtr<Gtk::TextTag> m_measure_tag;
+    mutable Glib::ustring m_overhang_key; // cache key for ink_overhang_px()
+    mutable int m_overhang_px = 0;
     int m_measure_margin = 0; // fixed left gutter once allocated
     int m_measure_margin_right = 0; // dynamic right margin enforcing the line-length cap
     void update_typographic_spacing();

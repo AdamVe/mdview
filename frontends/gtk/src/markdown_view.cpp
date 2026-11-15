@@ -326,7 +326,7 @@ void MarkdownView::setup_tags() {
     add_tag("code_block_language", "family=monospace;weight=bold;scale=0.8;");
 
     // Block tags
-    add_tag("blockquote", "indent=8;left-margin=8;");
+    add_tag("blockquote", "left-margin=8;"); // no first-line indent: quotes have no marker to align under
     add_tag("link", "foreground=blue;underline=single;");
     add_tag("hr", "wrap-mode=none;");
     add_tag("bullet", "indent=8;left-margin=8;");
@@ -383,25 +383,27 @@ bool MarkdownView::update_measure_margins() {
     layout->get_pixel_size(adv, h);
     if (adv <= 0)
         return false;
-    // Deliberately zoom-independent: the gutter must not creep while the
-    // user zooms (chars-per-line simply drops at higher zoom, as in browsers).
-    constexpr int kLeftMargin = 48;
+    // The whole measure scales with zoom so the layout stays proportional to
+    // the glyphs: the gutter grows with the text and the ~78-character cap
+    // holds at every zoom level.
+    constexpr int kBaseLeftMargin = 48;
     constexpr int kMinRightMargin = 24;
-    const int target = static_cast<int>(78.0 * adv);
-    const int right = std::max(kMinRightMargin, width - kLeftMargin - target);
-    if (right == m_measure_margin_right && m_measure_margin == kLeftMargin)
+    const int left = std::max(24, static_cast<int>(std::lround(kBaseLeftMargin * m_zoom)));
+    const int target = static_cast<int>(78.0 * adv * m_zoom);
+    const int right = std::max(kMinRightMargin, width - left - target);
+    if (right == m_measure_margin_right && m_measure_margin == left)
         return false;
-    m_measure_margin = kLeftMargin;
+    m_measure_margin = left;
     m_measure_margin_right = right;
     if (m_measure_tag) {
-        m_measure_tag->property_left_margin() = kLeftMargin;
+        m_measure_tag->property_left_margin() = left;
         m_measure_tag->property_right_margin() = right;
     }
     // Tags carrying their own left-margin override the measure tag; keep them
     // at measure + their design indent so every column starts aligned.
     for (const char *name: {"code_block", "code_block_padding_top", "code_block_padding_bottom", "table_cell"}) {
         if (const auto tag = m_tag_table->lookup(name))
-            tag->property_left_margin() = kLeftMargin;
+            tag->property_left_margin() = left;
     }
     update_list_indent();
     rescale_images();
@@ -499,7 +501,6 @@ void MarkdownView::add_tag(const Glib::ustring &name, const Glib::ustring & /*pr
         tag->property_wrap_mode() = Gtk::WrapMode::NONE;
     } else if (name == "blockquote") {
         tag->property_left_margin() = 8;
-        tag->property_indent() = 8;
     } else if (name == "link") {
         tag->property_foreground() = "#0000ff";
         tag->property_underline() = Pango::Underline::SINGLE;
@@ -753,17 +754,17 @@ void MarkdownView::insert_node(const mdview::CodeBlock &cb, Gtk::TextIter &iter)
 }
 
 Glib::RefPtr<Gtk::TextTag> MarkdownView::quote_tag(int depth) {
-    // Same lazy pattern as list_tag(): depth 0 reuses the classic "blockquote"
-    // tag; deeper quotes get "blockquote-dN" siblings with proportional margins.
-    const Glib::ustring name =
-            depth == 0 ? Glib::ustring("blockquote") : Glib::ustring("blockquote-d" + std::to_string(depth));
+    // Lazy "blockquote-dN" tags for every depth (list_tag() pattern). The
+    // legacy plain "blockquote" tag stays theme-painted but is no longer the
+    // layout carrier: margin updates on it proved unreliable next to the
+    // buffer-wide measure tag, while freshly created per-depth tags honour
+    // theirs exactly.
+    const Glib::ustring name = "blockquote-d" + std::to_string(depth);
     if (const auto existing = m_tag_table->lookup(name))
         return existing;
     const auto tag = Gtk::TextTag::create(name);
     m_tag_table->add(tag);
-    const int extra = static_cast<int>(m_base_indent * m_zoom);
-    tag->property_left_margin() = m_measure_margin + extra * (depth + 1);
-    tag->property_indent() = extra;
+    tag->property_left_margin() = m_measure_margin + quote_pad() + m_base_indent * m_zoom * depth;
     tag->property_background() = m_dark_mode ? "#2a2a2a" : "#f0f0f0";
     tag->property_paragraph_background() = m_dark_mode ? "#2a2a2a" : "#f0f0f0";
     return tag;
@@ -1630,6 +1631,27 @@ void MarkdownView::snapshot_vfunc(const Glib::RefPtr<Gtk::Snapshot> &snapshot) {
 
 // Small copy glyph at the top-left of every code block, in front of the
 // language label. Painted (not a widget) so buffer layout is untouched.
+// Inner padding between a quote bar and its text column. Layout reserves
+// exactly this much left margin so the painted bar lands on the document
+// column (m_measure_margin), aligning the block with headings and code.
+int MarkdownView::quote_pad() { return std::max(4, static_cast<int>(std::lround((10 + ink_overhang_px()) * m_zoom))); }
+
+// Worst-case horizontal ink overhang beyond a layout's logical origin for
+// the widget's current font (round glyphs like 'w'/'m' bleed left of the
+// advance). Measured, not guessed: theme fonts and text scaling vary.
+int MarkdownView::ink_overhang_px() {
+    const Glib::ustring key = get_pango_context()->get_font_description().to_string();
+    if (key == m_overhang_key)
+        return m_overhang_px;
+    const auto layout = create_pango_layout("mwq");
+    Pango::Rectangle ink;
+    Pango::Rectangle logical;
+    layout->get_pixel_extents(ink, logical);
+    m_overhang_key = key;
+    m_overhang_px = std::max(0, logical.get_x() - ink.get_x());
+    return m_overhang_px;
+}
+
 // GitHub-style vertical rule in the gutter of each block-quote run. Lines are
 // recorded per logical line with their quote depth in LineInfo::info; maximal
 // runs of equal depth become one rect spanning wrapped lines via line yranges.
@@ -1653,12 +1675,38 @@ void MarkdownView::paint_quote_bars(const Glib::RefPtr<Gtk::Snapshot> &snapshot)
         int h1 = 0;
         get_line_yrange(m_buffer->get_iter_at_line(run_first_line), y0, h0);
         get_line_yrange(m_buffer->get_iter_at_line(last_line), y1, h1);
-        const int extra = static_cast<int>(m_base_indent * m_zoom);
-        const double x = m_measure_margin + extra * (run_depth + 1) - 5.0;
+        // Anchor to laid-out line origins, not to tag-margin arithmetic:
+        // wrapped continuations start at the tag's left_margin (without the
+        // first-line indent), so anything computed from margins alone can
+        // land on top of them. Clearance adds the font's worst-case ink
+        // overhang past the layout origin, measured live so theme font and
+        // text scaling cannot push glyphs into the bar.
+        int origin_x = 0;
+        bool have_x = false;
+        for (int line = run_first_line; line <= last_line; ++line) {
+            Gdk::Rectangle r;
+            get_iter_location(m_buffer->get_iter_at_line(line), r);
+            if (!have_x || r.get_x() < origin_x) {
+                origin_x = r.get_x();
+                have_x = true;
+            }
+        }
+        if (!have_x)
+            return;
         int wx = 0;
         int wy = 0;
-        buffer_to_window_coords(Gtk::TextWindowType::TEXT, static_cast<int>(x), y0, wx, wy);
-        snapshot->append_color(bar, Gdk::Graphene::Rect(wx, wy, 3.0, (y1 + h1) - y0));
+        // Gap and bar thickness track zoom so the rule stays proportional
+        // to the text. Tags cannot pad text inside their paragraph
+        // background, so fake it: paint a filler in the quote's background
+        // colour from the bar to the text column, making the gap read as
+        // inner padding of the quoted block.
+        const int pad = quote_pad();
+        const int bar_w = std::max(2, static_cast<int>(std::lround(3.0 * m_zoom))); // integral: no AA seam vs filler
+        buffer_to_window_coords(Gtk::TextWindowType::TEXT, origin_x - pad, y0, wx, wy);
+        const Gdk::RGBA tint = m_dark_mode ? Gdk::RGBA("#2a2a2a") : Gdk::RGBA("#f0f0f0");
+        const double h = (y1 + h1) - y0;
+        snapshot->append_color(tint, Gdk::Graphene::Rect(wx, wy, pad, h));
+        snapshot->append_color(bar, Gdk::Graphene::Rect(wx, wy, bar_w, h));
         run_depth = -1;
     };
 
@@ -2056,11 +2104,9 @@ void MarkdownView::update_search_colors() { setup_search_colors(); }
 
 void MarkdownView::update_list_indent() {
     const int extra = static_cast<int>(m_base_indent * m_zoom);
-    for (const char *name: {"bullet", "blockquote"}) {
-        if (const auto tag = m_tag_table->lookup(name)) {
-            tag->property_left_margin() = m_measure_margin + extra;
-            tag->property_indent() = extra;
-        }
+    if (const auto bullet = m_tag_table->lookup("bullet")) {
+        bullet->property_left_margin() = m_measure_margin + extra;
+        bullet->property_indent() = extra;
     }
     for (int depth = 1;; ++depth) {
         const auto bullet = m_tag_table->lookup("bullet-d" + std::to_string(depth));
@@ -2069,12 +2115,11 @@ void MarkdownView::update_list_indent() {
         bullet->property_left_margin() = m_measure_margin + extra * (depth + 1);
         bullet->property_indent() = extra;
     }
-    for (int depth = 1;; ++depth) {
+    for (int depth = 0;; ++depth) {
         const auto quote = m_tag_table->lookup("blockquote-d" + std::to_string(depth));
         if (!quote)
             break;
-        quote->property_left_margin() = m_measure_margin + extra * (depth + 1);
-        quote->property_indent() = extra;
+        quote->property_left_margin() = m_measure_margin + quote_pad() + extra * depth;
     }
 }
 
