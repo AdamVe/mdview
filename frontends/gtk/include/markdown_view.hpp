@@ -141,7 +141,8 @@ private:
     };
     std::vector<RhythmTag> m_rhythm_tags;
     Glib::RefPtr<Gtk::TextTag> m_measure_tag;
-    int m_measure_margin = 0;
+    int m_measure_margin = 0; // fixed left gutter once allocated
+    int m_measure_margin_right = 0; // dynamic right margin enforcing the line-length cap
     void update_typographic_spacing();
     bool update_measure_margins(); // true when the margin changed
     void force_full_relayout();

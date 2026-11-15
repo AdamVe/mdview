@@ -369,8 +369,10 @@ void MarkdownView::update_typographic_spacing() {
     }
 }
 
-// Book measure: center the text column and cap it near 78 characters so long
-// lines stay readable on wide windows (60-90 chars is the classic range).
+// Book measure: keep a constant left gutter and cap line length near 78
+// characters so long lines stay readable on wide windows (60-90 chars is the
+// classic range). The cap grows only the RIGHT margin; the left edge never
+// moves, so resizing the window does not slide the text sideways.
 bool MarkdownView::update_measure_margins() {
     const int width = get_allocated_width();
     if (width < 200)
@@ -383,20 +385,23 @@ bool MarkdownView::update_measure_margins() {
         return false;
     // Deliberately zoom-independent: the gutter must not creep while the
     // user zooms (chars-per-line simply drops at higher zoom, as in browsers).
+    constexpr int kLeftMargin = 48;
+    constexpr int kMinRightMargin = 24;
     const int target = static_cast<int>(78.0 * adv);
-    const int margin = std::clamp((width - target) / 2, 24, 480);
-    if (margin == m_measure_margin)
+    const int right = std::max(kMinRightMargin, width - kLeftMargin - target);
+    if (right == m_measure_margin_right && m_measure_margin == kLeftMargin)
         return false;
-    m_measure_margin = margin;
+    m_measure_margin = kLeftMargin;
+    m_measure_margin_right = right;
     if (m_measure_tag) {
-        m_measure_tag->property_left_margin() = margin;
-        m_measure_tag->property_right_margin() = margin;
+        m_measure_tag->property_left_margin() = kLeftMargin;
+        m_measure_tag->property_right_margin() = right;
     }
     // Tags carrying their own left-margin override the measure tag; keep them
     // at measure + their design indent so every column starts aligned.
     for (const char *name: {"code_block", "code_block_padding_top", "code_block_padding_bottom", "table_cell"}) {
         if (const auto tag = m_tag_table->lookup(name))
-            tag->property_left_margin() = margin;
+            tag->property_left_margin() = kLeftMargin;
     }
     update_list_indent();
     rescale_images();
@@ -1453,7 +1458,7 @@ namespace {
 double MarkdownView::image_scale_for(int natural_width) const {
     if (natural_width <= 0)
         return 1.0;
-    int avail = get_allocated_width() - 2 * m_measure_margin - 8;
+    int avail = get_allocated_width() - m_measure_margin - m_measure_margin_right - 8;
     if (avail < 100)
         avail = 1024; // not allocated yet; assume a typical window
     return std::min(1.0, static_cast<double>(avail) / natural_width) * static_cast<double>(m_zoom);
