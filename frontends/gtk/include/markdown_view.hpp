@@ -168,6 +168,7 @@ private:
 
     // Block map (buffer line start offset -> block info), rebuilt on every load()
     void record_lines(int start, int end, LineKind kind, const std::string &info = {});
+    void record_list_lines(const std::vector<mdview::ListEntry> &entries, Gtk::TextIter &it, int depth);
     void record_block(int start, int end, const mdview::DocNode &node);
     LineInfo line_info_at(int line_start) const;
 

@@ -547,6 +547,20 @@ void MarkdownView::record_lines(int start, int end, LineKind kind, const std::st
     }
 }
 
+// One line per list entry, in insertion order (children immediately follow
+// their parent), tagged "<kind><depth><x|->" so copy-as-Markdown can rebuild
+// nesting, ordered/bullet/task kind and checkbox state.
+void MarkdownView::record_list_lines(const std::vector<mdview::ListEntry> &entries, Gtk::TextIter &it, int depth) {
+    for (const auto &entry: entries) {
+        std::string meta{entry.kind};
+        meta += std::to_string(depth);
+        meta += entry.checked ? 'x' : '-';
+        m_line_info[it.get_offset()] = LineInfo{LineKind::ListItem, meta};
+        it.forward_line();
+        record_list_lines(entry.children, it, depth + 1);
+    }
+}
+
 void MarkdownView::record_block(int start, int end, const mdview::DocNode &node) {
     std::visit(
             [this, start, end]<typename T>(const T &n) {
@@ -571,7 +585,9 @@ void MarkdownView::record_block(int start, int end, const mdview::DocNode &node)
                 } else if constexpr (std::is_same_v<U, mdview::HRule>) {
                     record_lines(start, end, LineKind::HRule);
                 } else if constexpr (std::is_same_v<U, mdview::List>) {
-                    record_lines(start, end, LineKind::ListItem);
+                    Gtk::TextIter it = m_buffer->get_iter_at_offset(start);
+                    it.set_line_offset(0);
+                    record_list_lines(n.items, it, 0);
                 } else if constexpr (std::is_same_v<U, mdview::Table>) {
                     record_lines(start, end, LineKind::TableLine);
                 }
@@ -2799,17 +2815,39 @@ Glib::ustring MarkdownView::build_markdown(const Gtk::TextConstIter &sel_start,
                         level = 1;
                     prefix = std::string(static_cast<size_t>(std::clamp(level, 1, 4)), '#') + " ";
                 } else if (info.kind == LineKind::ListItem) {
-                    prefix = "- ";
+                    // info.info carries "<kind><depth><x|->" from record_list_lines.
+                    char kind = 'u';
+                    int depth = 0;
+                    bool checked = false;
+                    if (info.info.size() >= 3) {
+                        kind = info.info[0];
+                        std::from_chars(info.info.data() + 1, info.info.data() + info.info.size() - 1, depth);
+                        checked = info.info.back() == 'x';
+                    }
+                    prefix = std::string(static_cast<size_t>(2 * depth), ' ');
+                    prefix += kind == 'o' ? "1. " : "- ";
+                    if (kind == 't')
+                        prefix += checked ? "[x] " : "[ ] ";
+                    // Strip the rendered marker by CHARACTERS: ustring::substr counts
+                    // chars, not bytes, and bullet/checkbox glyphs are one char each.
                     const std::string_view text = body.raw();
+                    size_t cut = 0;
                     if (text.starts_with("\u2022 ") || text.starts_with("\u2611 ") || text.starts_with("\u2610 "))
-                        body = body.substr(4); // strip rendered "• "/"☑ "/"\u2610 " marker
-                    else if (const auto dot = text.find(". ");
-                             dot != std::string_view::npos && dot <= 2 &&
-                             std::all_of(text.begin(), text.begin() + static_cast<long>(dot),
-                                         [](char ch) { return ch >= '0' && ch <= '9'; }))
-                        body = body.substr(dot + 2); // strip rendered "N. " marker
+                        cut = 2;
+                    else {
+                        size_t digits = 0;
+                        while (digits < text.size() && text[digits] >= '0' && text[digits] <= '9')
+                            ++digits;
+                        if (digits > 0 && digits + 1 < text.size() && text[digits] == '.' && text[digits + 1] == ' ')
+                            cut = digits + 2; // ASCII prefix: byte offset == char offset
+                    }
+                    if (cut > 0)
+                        body = body.substr(cut);
                 } else if (info.kind == LineKind::BlockQuote) {
-                    prefix = "> ";
+                    int depth = 0;
+                    if (!info.info.empty())
+                        std::from_chars(info.info.data(), info.info.data() + info.info.size(), depth);
+                    prefix = std::string(static_cast<size_t>(depth + 1), '>') + " ";
                 }
                 out += Glib::ustring(prefix) + body + "\n";
                 break;

@@ -31,7 +31,21 @@ namespace {
                                  "\n"
                                  "trailing paragraph\n"
                                  "\n"
-                                 "![Remote logo](https://example.com/logo.png)\n";
+                                 "![Remote logo](https://example.com/logo.png)\n"
+                                 "\n"
+                                 "- alpha\n"
+                                 "- beta\n"
+                                 "  - nested gamma\n"
+                                 "\n"
+                                 "1. first\n"
+                                 "2. second\n"
+                                 "\n"
+                                 "- [x] done task\n"
+                                 "- [ ] open task\n"
+                                 "\n"
+                                 "> quoted one\n"
+                                 ">\n"
+                                 ">> deep quote\n";
 
     // One realized view for the whole suite: widgets are expensive to spin up
     // headless, and per-test teardown of GTK stacks can stall without a session
@@ -106,6 +120,44 @@ namespace {
         const Glib::ustring md = g_view->build_markdown(buf->get_iter_at_line(img_line), line_end);
         // build_markdown reconstructs whole lines, so it terminates with \n.
         EXPECT_EQ(md, "![Remote logo](https://example.com/logo.png)\n");
+    }
+
+    // Copies whole buffer lines [first_line, last_line] through the same path
+    // the Copy-as-Markdown action uses.
+    static Glib::ustring copy_lines(int first_line, int last_line) {
+        const auto buf = g_view->get_buffer();
+        Gtk::TextIter start = buf->get_iter_at_line(first_line);
+        Gtk::TextIter end = buf->get_iter_at_line(last_line);
+        end.forward_to_line_end();
+        return g_view->build_markdown(start, end);
+    }
+
+    TEST_F(MarkdownViewSuite, CopyAsMarkdownKeepsBulletContentIntact) {
+        // Regression: stripping the rendered "• " marker counted its 3 UTF-8
+        // bytes as characters and ate two content characters per bullet item.
+        const int a = line_containing("alpha");
+        const int g = line_containing("nested gamma");
+        ASSERT_GT(a, 0);
+        ASSERT_GT(g, 0);
+        EXPECT_EQ(copy_lines(a, g), "- alpha\n- beta\n  - nested gamma\n");
+    }
+
+    TEST_F(MarkdownViewSuite, CopyAsMarkdownRebuildsOrderedAndTaskItems) {
+        const int f = line_containing("first");
+        const int o = line_containing("open task");
+        ASSERT_GT(f, 0);
+        ASSERT_GT(o, 0);
+        // Ordered items normalize to "1." — markdown renderers renumber them.
+        EXPECT_EQ(copy_lines(f, o), "1. first\n1. second\n- [x] done task\n- [ ] open task\n");
+    }
+
+    TEST_F(MarkdownViewSuite, CopyAsMarkdownNestsQuoteMarkers) {
+        const int q = line_containing("quoted one");
+        const int d = line_containing("deep quote");
+        ASSERT_GT(q, 0);
+        ASSERT_GT(d, 0);
+        // The bare ">" separator line carries no content and is not emitted.
+        EXPECT_EQ(copy_lines(q, d), "> quoted one\n>> deep quote\n");
     }
 
     TEST_F(MarkdownViewSuite, TocListsHeadingsInOrder) {
