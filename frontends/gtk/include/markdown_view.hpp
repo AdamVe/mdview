@@ -143,7 +143,8 @@ private:
     Glib::RefPtr<Gtk::TextTag> m_measure_tag;
     int m_measure_margin = 0;
     void update_typographic_spacing();
-    void update_measure_margins();
+    bool update_measure_margins(); // true when the margin changed
+    void force_full_relayout();
     void style_block_range(int start, int end, const mdview::DocNode &node);
     void strip_body_from_image_markers();
     void update_code_backgrounds() const;

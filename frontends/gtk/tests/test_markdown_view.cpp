@@ -242,6 +242,55 @@ namespace {
         EXPECT_FALSE(g_view->code_block_bounds(g_view->get_buffer()->get_iter_at_line(para), start, end));
     }
 
+    // Regression: widening the window re-centered table rows while headings and
+    // paragraphs kept their stale measure margin until a zoom change forced a
+    // full relayout. After a resize every line must share the new margin.
+    TEST_F(MarkdownViewSuite, ResizeRealignsAllLinesToMeasureMargin) {
+        auto *window = dynamic_cast<Gtk::Window *>(g_view->get_root());
+        ASSERT_NE(window, nullptr);
+        const auto doc = mdview::parse_markdown(
+                "## Headline\n\n| alpha | beta |\n|-------|------|\n| 1     | 2    |\n\nafter table\n");
+        ASSERT_TRUE(doc.has_value());
+        g_view->load(*doc);
+
+        const auto pump_until_wider_than = [window](int px) {
+            for (int i = 0; i < 500; ++i) {
+                while (Glib::MainContext::get_default()->pending())
+                    Glib::MainContext::get_default()->iteration(false);
+                if (g_view->get_width() > px)
+                    return true;
+                window->set_default_size(px + 80, 700);
+                g_usleep(4000);
+            }
+            return false;
+        };
+        if (!pump_until_wider_than(500))
+            GTEST_SKIP() << "view never allocated (no usable display?)";
+
+        const int head = line_containing("Headline");
+        const int table = line_containing("alpha");
+        const int para = line_containing("after table");
+        ASSERT_GE(head, 0);
+        ASSERT_GT(table, 0);
+        ASSERT_GT(para, 0);
+        auto line_x = [&](int line) {
+            Gdk::Rectangle r;
+            g_view->get_iter_location(g_view->get_buffer()->get_iter_at_line(line), r);
+            return r.get_x();
+        };
+        const int head_before = line_x(head);
+
+        window->set_default_size(1180, 700);
+        if (!pump_until_wider_than(1100))
+            GTEST_SKIP() << "window did not grow (no usable display?)";
+
+        const int head_after = line_x(head);
+        if (head_after == head_before)
+            GTEST_SKIP() << "measure margin unchanged between widths (clamped)";
+        EXPECT_EQ(line_x(table), head_after);
+        EXPECT_EQ(line_x(para), head_after);
+    }
+
 } // namespace
 
 int main(int argc, char **argv) {

@@ -274,16 +274,25 @@ void MarkdownView::apply_zoom() {
     update_measure_margins();
     rescale_images();
 
-    // Re-apply zoom and measure tags to all text in the buffer
-    if (m_buffer && m_has_content) {
-        auto start = m_buffer->begin();
-        auto end = m_buffer->end();
-        m_buffer->remove_tag(m_zoom_tag, start, end);
-        m_buffer->apply_tag(m_zoom_tag, start, end);
-        if (m_measure_tag) {
-            m_buffer->remove_tag(m_measure_tag, start, end);
-            m_buffer->apply_tag(m_measure_tag, start, end);
-        }
+    // Margins/scales above only take visible effect once the tags have been
+    // touched on the buffer; property edits alone leave cached layouts stale.
+    force_full_relayout();
+}
+
+// GtkTextView caches per-line layout geometry; changing a tag's margin or
+// scale property does NOT dirty the lines referencing it. Removing and
+// re-applying the buffer-wide tags rewrites line attributes and forces a
+// complete relayout.
+void MarkdownView::force_full_relayout() {
+    if (!m_buffer || !m_has_content)
+        return;
+    const auto start = m_buffer->begin();
+    const auto end = m_buffer->end();
+    m_buffer->remove_tag(m_zoom_tag, start, end);
+    m_buffer->apply_tag(m_zoom_tag, start, end);
+    if (m_measure_tag) {
+        m_buffer->remove_tag(m_measure_tag, start, end);
+        m_buffer->apply_tag(m_measure_tag, start, end);
     }
 }
 
@@ -293,7 +302,8 @@ void MarkdownView::size_allocate_vfunc(int width, int height, int baseline) {
     Gtk::TextView::size_allocate_vfunc(width, height, baseline);
     if (width != m_last_alloc_width) {
         m_last_alloc_width = width;
-        update_measure_margins();
+        if (update_measure_margins())
+            force_full_relayout(); // tag property edits alone do not invalidate cached line layouts
         rescale_images();
     }
 }
@@ -361,22 +371,22 @@ void MarkdownView::update_typographic_spacing() {
 
 // Book measure: center the text column and cap it near 78 characters so long
 // lines stay readable on wide windows (60-90 chars is the classic range).
-void MarkdownView::update_measure_margins() {
+bool MarkdownView::update_measure_margins() {
     const int width = get_allocated_width();
     if (width < 200)
-        return;
+        return false;
     const auto layout = create_pango_layout("M");
     int adv = 0;
     int h = 0;
     layout->get_pixel_size(adv, h);
     if (adv <= 0)
-        return;
+        return false;
     // Deliberately zoom-independent: the gutter must not creep while the
     // user zooms (chars-per-line simply drops at higher zoom, as in browsers).
     const int target = static_cast<int>(78.0 * adv);
     const int margin = std::clamp((width - target) / 2, 24, 480);
     if (margin == m_measure_margin)
-        return;
+        return false;
     m_measure_margin = margin;
     if (m_measure_tag) {
         m_measure_tag->property_left_margin() = margin;
@@ -390,6 +400,7 @@ void MarkdownView::update_measure_margins() {
     }
     update_list_indent();
     rescale_images();
+    return true;
 }
 
 Glib::RefPtr<Gtk::TextTag> MarkdownView::grid_fix_tag(const Glib::ustring &family, int scale_milli, int rise_pu) {
