@@ -25,12 +25,13 @@ namespace {
         Glib::RefPtr<Gdk::Pixbuf> pixbuf;
     };
 
-    RenderResult render_png(const std::string &fixture, int width = 900, const char *env_name = nullptr) {
+    RenderResult render_png(const std::string &fixture, int width = 900, const char *env_name = nullptr,
+                            const char *env_value = "1") {
         RenderResult out;
         const std::string png = Glib::build_filename(Glib::get_tmp_dir(), "mdview-render-test.png");
         // gtkmm's Subprocess::create has no env parameter; inherit and toggle.
         if (env_name)
-            g_setenv(env_name, "1", TRUE);
+            g_setenv(env_name, env_value, TRUE);
         try {
             const auto proc = Gio::Subprocess::create({g_mdview, "--render-png", png, "--width", std::to_string(width),
                                                        Glib::build_filename(g_fixtures, fixture)},
@@ -118,6 +119,32 @@ namespace {
         ASSERT_EQ(first.pixbuf->get_height(), second.pixbuf->get_height());
         EXPECT_EQ(0, std::memcmp(first.pixbuf->get_pixels(), second.pixbuf->get_pixels(),
                                  static_cast<size_t>(first.pixbuf->get_height()) * first.pixbuf->get_rowstride()));
+    }
+
+    TEST(RenderPng, DarkThemeSwitchesSurfaces) {
+        // GTK_THEME must flip both the painted theme and the view's own
+        // dark-mode colours (quote fills are app-painted, not theme-painted).
+        const auto light = render_png("blocks.md");
+        ASSERT_EQ(light.exit_code, 0) << light.stderr_text;
+        ASSERT_TRUE(light.pixbuf);
+        EXPECT_GE(count_matching(light.pixbuf, 240, 240, 240), 5000) << "expected light quote fill";
+
+        const auto dark = render_png("blocks.md", 900, "GTK_THEME", "Adwaita-dark");
+        ASSERT_EQ(dark.exit_code, 0) << dark.stderr_text;
+        ASSERT_TRUE(dark.pixbuf);
+        EXPECT_GE(count_matching(dark.pixbuf, 42, 42, 42), 5000) << "quote surfaces did not follow dark mode";
+
+        // Theme chrome differs across machines, so judge "mostly dark" by
+        // luminance share rather than an exact background colour.
+        const auto pb = dark.pixbuf;
+        const int channels = pb->get_n_channels();
+        const guint8 *px = pb->get_pixels();
+        const size_t total = static_cast<size_t>(pb->get_width()) * pb->get_height();
+        size_t dim = 0;
+        for (size_t i = 0; i < total; ++i)
+            if (px[i * channels] + px[i * channels + 1] + px[i * channels + 2] < 360)
+                ++dim;
+        EXPECT_GT(dim, total / 2) << "background stayed light despite GTK_THEME";
     }
 
     TEST(RenderPng, TablesArePixelAlignedPerTable) {

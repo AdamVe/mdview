@@ -1940,6 +1940,13 @@ void MarkdownView::setup_color_detection() {
         }));
     }
 
+    // GTK_THEME swaps the painted theme without touching gtk-theme-name, so
+    // checking only the setting misclassifies override sessions as light.
+    if (const char *theme_override = g_getenv("GTK_THEME")) {
+        const std::string_view theme(theme_override);
+        m_dark_mode = theme.contains("dark") || theme.contains("Dark");
+    }
+
     // Set initial code block background color
     update_code_backgrounds();
 }
