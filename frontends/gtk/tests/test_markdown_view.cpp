@@ -147,8 +147,7 @@ namespace {
         const int o = line_containing("open task");
         ASSERT_GT(f, 0);
         ASSERT_GT(o, 0);
-        // Ordered items normalize to "1." — markdown renderers renumber them.
-        EXPECT_EQ(copy_lines(f, o), "1. first\n1. second\n- [x] done task\n- [ ] open task\n");
+        EXPECT_EQ(copy_lines(f, o), "1. first\n2. second\n- [x] done task\n- [ ] open task\n");
     }
 
     TEST_F(MarkdownViewSuite, CopyAsMarkdownNestsQuoteMarkers) {

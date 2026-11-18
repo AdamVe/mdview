@@ -548,14 +548,21 @@ void MarkdownView::record_lines(int start, int end, LineKind kind, const std::st
 }
 
 // One line per list entry, in insertion order (children immediately follow
-// their parent), tagged "<kind><depth><x|->" so copy-as-Markdown can rebuild
-// nesting, ordered/bullet/task kind and checkbox state.
+// their parent). The info carries the literal markdown prefix ("  1. ",
+// "- [x] ") so copy-as-Markdown reproduces nesting, item kind, checkbox
+// state and the rendered numbering verbatim; numbering mirrors
+// insert_list_entries, which counts only ordered items per level.
 void MarkdownView::record_list_lines(const std::vector<mdview::ListEntry> &entries, Gtk::TextIter &it, int depth) {
+    int number = 1;
     for (const auto &entry: entries) {
-        std::string meta{entry.kind};
-        meta += std::to_string(depth);
-        meta += entry.checked ? 'x' : '-';
-        m_line_info[it.get_offset()] = LineInfo{LineKind::ListItem, meta};
+        std::string prefix(static_cast<size_t>(2 * depth), ' ');
+        if (entry.kind == 'o')
+            prefix += std::to_string(number++) + ". ";
+        else
+            prefix += "- ";
+        if (entry.kind == 't')
+            prefix += entry.checked ? "[x] " : "[ ] ";
+        m_line_info[it.get_offset()] = LineInfo{LineKind::ListItem, prefix};
         it.forward_line();
         record_list_lines(entry.children, it, depth + 1);
     }
@@ -2822,19 +2829,8 @@ Glib::ustring MarkdownView::build_markdown(const Gtk::TextConstIter &sel_start,
                         level = 1;
                     prefix = std::string(static_cast<size_t>(std::clamp(level, 1, 4)), '#') + " ";
                 } else if (info.kind == LineKind::ListItem) {
-                    // info.info carries "<kind><depth><x|->" from record_list_lines.
-                    char kind = 'u';
-                    int depth = 0;
-                    bool checked = false;
-                    if (info.info.size() >= 3) {
-                        kind = info.info[0];
-                        std::from_chars(info.info.data() + 1, info.info.data() + info.info.size() - 1, depth);
-                        checked = info.info.back() == 'x';
-                    }
-                    prefix = std::string(static_cast<size_t>(2 * depth), ' ');
-                    prefix += kind == 'o' ? "1. " : "- ";
-                    if (kind == 't')
-                        prefix += checked ? "[x] " : "[ ] ";
+                    // record_list_lines stored the literal markdown prefix.
+                    prefix = info.info.empty() ? "- " : info.info;
                     // Strip the rendered marker by CHARACTERS: ustring::substr counts
                     // chars, not bytes, and bullet/checkbox glyphs are one char each.
                     const std::string_view text = body.raw();
