@@ -45,7 +45,11 @@ namespace {
                                  "\n"
                                  "> quoted one\n"
                                  ">\n"
-                                 ">> deep quote\n";
+                                 ">> deep quote\n"
+                                 "\n"
+                                 "| Name | Qty |\n"
+                                 "| ---- | --: |\n"
+                                 "| apple | 3 |\n";
 
     // One realized view for the whole suite: widgets are expensive to spin up
     // headless, and per-test teardown of GTK stacks can stall without a session
@@ -76,7 +80,7 @@ namespace {
                 Gtk::TextIter s = buf->get_iter_at_line(i);
                 Gtk::TextIter e = s;
                 e.forward_to_line_end();
-                if (std::string_view(Glib::ustring(s, e).raw()).find(needle) != std::string_view::npos)
+                if (std::string_view(buf->get_text(s, e, false).raw()).find(needle) != std::string_view::npos)
                     return i;
             }
             return -1;
@@ -157,6 +161,46 @@ namespace {
         ASSERT_GT(d, 0);
         // The bare ">" separator line carries no content and is not emitted.
         EXPECT_EQ(copy_lines(q, d), "> quoted one\n>> deep quote\n");
+    }
+
+    TEST_F(MarkdownViewSuite, CopyAsMarkdownReconstructsTable) {
+        const int head = line_containing("Name");
+        const int body = line_containing("apple");
+        ASSERT_GT(head, 0);
+        ASSERT_GT(body, head);
+        // Box-drawing borders collapse back to pipe syntax; column alignment
+        // metadata ("--:") is not kept in the buffer and normalizes to "---".
+        EXPECT_EQ(copy_lines(head, body), "| Name | Qty |\n| --- | --- |\n| apple | 3 |\n");
+    }
+
+    TEST_F(MarkdownViewSuite, CopyStartingMidLineKeepsRestOfLine) {
+        const auto buf = g_view->get_buffer();
+        const int line = line_containing("trailing paragraph");
+        ASSERT_GT(line, 0);
+        Gtk::TextIter start = buf->get_iter_at_line(line);
+        start.forward_chars(3);
+        Gtk::TextIter end = start;
+        end.forward_to_line_end();
+        EXPECT_EQ(g_view->build_markdown(start, end), "iling paragraph\n");
+
+        // Ending mid-line truncates there as well.
+        Gtk::TextIter q = buf->get_iter_at_line(line_containing("quoted one"));
+        Gtk::TextIter d = buf->get_iter_at_line(line_containing("deep quote"));
+        d.forward_chars(3);
+        EXPECT_EQ(g_view->build_markdown(q, d), "> quoted one\n>> dee\n");
+    }
+
+    TEST_F(MarkdownViewSuite, CopyMidItemStillCarriesStructurePrefix) {
+        // Selection starts inside the content, after the rendered marker:
+        // the reconstructed line keeps its "- " so it stays a list item.
+        const auto buf = g_view->get_buffer();
+        const Glib::ustring all = buf->get_text(buf->begin(), buf->end(), false);
+        const auto pos = all.find("alpha");
+        ASSERT_NE(pos, std::string_view::npos);
+        Gtk::TextIter start = buf->get_iter_at_offset(static_cast<int>(pos) + 1); // 'a' -> 'l'
+        Gtk::TextIter end = start;
+        end.forward_to_line_end();
+        EXPECT_EQ(g_view->build_markdown(start, end), "- lpha\n");
     }
 
     TEST_F(MarkdownViewSuite, TocListsHeadingsInOrder) {
