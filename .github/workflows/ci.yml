@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++ meson ninja-build pkg-config xvfb libgtkmm-4.0-dev libsoup-3.0-dev \
+            libcmark-gfm-dev libcmark-gfm-extensions-dev
+
+      - name: Configure
+        run: meson setup build
+
+      - name: Build
+        run: ninja -C build
+
+      - name: Test
+        run: xvfb-run -a meson test -C build --print-errorlogs
