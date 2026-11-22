@@ -5,6 +5,8 @@ A native Markdown viewer for GTK4, built with gtkmm.
 
 ## Building
 
+Linux is the only currently tested platform.
+
 ### Dependencies
 
 - `meson` and `ninja`
