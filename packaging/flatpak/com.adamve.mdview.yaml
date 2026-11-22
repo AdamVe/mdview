@@ -1,0 +1,99 @@
+app-id: com.adamve.mdview
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+command: mdview
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # lazy-loaded http(s) images fetch over the network
+  - --share=network
+  # a markdown viewer opens arbitrary paths passed on the CLI or from the file manager
+  - --filesystem=host
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/pkgconfig
+  - '*.la'
+  - '*.a'
+modules:
+  # The GNOME runtime ships GTK but not the C++ bindings; build the gtkmm stack.
+  - name: libsigc++
+    buildsystem: meson
+    config-opts:
+      - -Dbuild-tests=false
+      - -Dbuild-examples=false
+    sources:
+      - type: archive
+        url: https://download.gnome.org/sources/libsigc++/3.6/libsigc++-3.6.0.tar.xz
+        sha256: c3d23b37dfd6e39f2e09f091b77b1541fbfa17c4f0b6bf5c89baef7229080e17
+  - name: glibmm
+    buildsystem: meson
+    config-opts:
+      # glibmm has no test toggle; tests compile but are never run here
+      - -Dbuild-examples=false
+    sources:
+      - type: archive
+        url: https://download.gnome.org/sources/glibmm/2.86/glibmm-2.86.0.tar.xz
+        sha256: 39c0e9f6da046d679390774efdb9ad564436236736dc2f7825e614b2d4087826
+  - name: cairomm
+    buildsystem: meson
+    config-opts:
+      - -Dbuild-tests=false
+      - -Dbuild-examples=false
+    sources:
+      - type: archive
+        # cairomm tarballs are hosted on cairographics.org, not download.gnome.org
+        url: https://cairographics.org/releases/cairomm-1.18.0.tar.xz
+        sha256: b81255394e3ea8e8aa887276d22afa8985fc8daef60692eb2407d23049f03cfb
+  - name: pangomm
+    buildsystem: meson
+    sources:
+      - type: archive
+        url: https://download.gnome.org/sources/pangomm/2.54/pangomm-2.54.0.tar.xz
+        sha256: 4a5b1fd1b7c47a1af45277ea82b5abeaca8e08fb10a27daa6394cf88d74e7acf
+  - name: gtkmm
+    buildsystem: meson
+    config-opts:
+      - -Dbuild-tests=false
+      - -Dbuild-demos=false
+    sources:
+      - type: archive
+        # must match the runtime's GTK generation (4.14 bindings break on GTK 4.20 headers)
+        url: https://download.gnome.org/sources/gtkmm/4.20/gtkmm-4.20.0.tar.xz
+        sha256: daad9bf9b70f90975f91781fc7a656c923a91374261f576c883cd3aebd59c833
+  - name: cmark-gfm
+    # 'simple' because cmark-gfm refuses in-source cmake builds and older
+    # flatpak-builder has no separate-build-dirs; drive cmake ourselves
+    buildsystem: simple
+    build-commands:
+      - mkdir -p build && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/app -DBUILD_SHARED_LIBS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      - cmake --build build
+      - cmake --install build
+    sources:
+      - type: archive
+        url: https://github.com/github/cmark-gfm/archive/refs/tags/0.29.0.gfm.13.tar.gz
+        sha256: 5abc61798ebd9de5660bc076443c07abad2b8d15dbc11094a3a79644b8ad243a
+  - name: mdview
+    buildsystem: meson
+    builddir: true
+    config-opts:
+      - -Dfrontend=gtk
+      - -Dlink_cmark=dynamic
+    sources:
+      - type: dir
+        path: ../..
+      # flatpak builds have no network for meson wraps; pre-seed googletest into
+      # subprojects/packagecache so subproject('gtest') resolves offline
+      - type: file
+        url: https://github.com/google/googletest/archive/refs/tags/v1.17.0.tar.gz
+        sha256: 65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c
+        dest: subprojects/packagecache
+        dest-filename: googletest-1.17.0.tar.gz
+      - type: file
+        url: https://wrapdb.mesonbuild.com/v2/gtest_1.17.0-4/get_patch
+        sha256: 3abf7662d09db706453a5b064a1e914678c74b9d9b0b19382747ca561d0d8750
+        dest: subprojects/packagecache
+        dest-filename: gtest_1.17.0-4_patch.zip

@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  flatpak:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Build
+        run: ./scripts/build-flatpak.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: build-flatpak/com.adamve.mdview.flatpak
+
+  appimage:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ meson ninja-build pkg-config libgtkmm-4.0-dev libsoup-3.0-dev
+
+      - name: Build
+        run: ./scripts/build-appimage.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          # named after the desktop Name= field (mdview-<arch>.AppImage); top level only,
+          # the downloaded linuxdeploy tooling lives in build-appimage/tools/
+          path: build-appimage/*.AppImage
+
+  release:
+    needs: [flatpak, appimage]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          # dev tags (contain '-') are marked pre-release; stable ones are not
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          # land as a draft so the description can be edited before publishing
+          draft: true
+          generate_release_notes: true
