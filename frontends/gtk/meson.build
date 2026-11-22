@@ -47,19 +47,6 @@ mdview_test_exe = executable('test_markdown_view_gtest',
 )
 test('markdown_view', mdview_test_exe, args: ['--gtest_brief=1'], suite: ['gtk'], timeout: 120)
 
-# PNG render regression tests (skip with exit code 77 when no display backend)
-test_render_exe = executable('test_render',
-  '../../tests/render/test_render.cpp',
-  include_directories: [includes, gtest_inc],
-  dependencies: [gtkmm, gtest],
-  install: false,
-)
-test('render_png', test_render_exe,
-  args: [mdview_exe, meson.current_source_dir() / '../../tests/render/fixtures'],
-  suite: ['render'],
-  timeout: 180,
-)
-
 # Install desktop file (absolute Exec for the configured prefix)
 desktop_conf = configuration_data()
 desktop_conf.set('BINDIR', get_option('prefix') / get_option('bindir'))

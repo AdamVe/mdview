@@ -25,4 +25,7 @@ subdir('core')
 
 if frontend == 'gtk' or frontend == 'adwaita'
   subdir('frontends/gtk')
+  # Render regression suite needs the built mdview binary; tests/render/meson.build
+  # consumes gtkmm/gtest/mdview_exe from the shared subdir scope.
+  subdir('tests/render')
 endif
