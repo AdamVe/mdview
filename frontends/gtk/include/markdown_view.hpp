@@ -1,13 +1,31 @@
 #pragma once
 #include <deque>
-#include <flat_map>
-#include <flat_set>
 #include <functional>
 #include <gtkmm.h>
 #include <memory>
 #include <string>
 #include <vector>
+#include <version>
 #include "mdview/doc_model.hpp"
+
+#if defined(__cpp_lib_flat_map) && defined(__cpp_lib_flat_set)
+#include <flat_map>
+#include <flat_set>
+namespace mdview {
+template <typename K, typename V> using OrderedMap = std::flat_map<K, V>;
+template <typename K> using OrderedSet = std::flat_set<K>;
+} // namespace mdview
+#else
+// libc++ ships flat_map only in LLVM 20 and flat_set in LLVM 21; fall back to
+// tree containers (same sorted-unique iteration these members rely on) so the
+// frontend builds with older standard libraries, e.g. macOS toolchains.
+#include <map>
+#include <set>
+namespace mdview {
+template <typename K, typename V> using OrderedMap = std::map<K, V>;
+template <typename K> using OrderedSet = std::set<K>;
+} // namespace mdview
+#endif
 
 class MarkdownView : public Gtk::TextView {
 public:
@@ -201,10 +219,10 @@ private:
     int m_base_indent = 8;
     int m_last_alloc_width = 0;
 
-    std::flat_map<int, LineInfo> m_line_info;
-    std::flat_map<std::string, Glib::RefPtr<Gtk::TextTag>> m_link_tags;
+    mdview::OrderedMap<int, LineInfo> m_line_info;
+    mdview::OrderedMap<std::string, Glib::RefPtr<Gtk::TextTag>> m_link_tags;
     unsigned m_link_tag_counter = 0;
-    std::flat_set<std::string> m_slugs;
+    mdview::OrderedSet<std::string> m_slugs;
     std::vector<TocEntry> m_toc;
     std::map<Glib::ustring, int> m_anchor_offsets; // anchor name -> buffer offset
     std::vector<std::pair<int, int>> m_code_blocks;
@@ -233,7 +251,7 @@ private:
         int nat_h = 0;
     };
     std::vector<ImgLine> m_imgline_tags;
-    std::flat_map<std::string, Glib::RefPtr<Gdk::Pixbuf>> m_image_cache;
+    mdview::OrderedMap<std::string, Glib::RefPtr<Gdk::Pixbuf>> m_image_cache;
     std::deque<std::string> m_image_cache_order; // FIFO eviction order
     size_t m_image_cache_bytes = 0; // decoded bytes held by the cache
     unsigned m_image_counter = 0;
