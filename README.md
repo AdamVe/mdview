@@ -37,6 +37,11 @@ meson setup build --prefix=$HOME/.local
 ninja -C build install
 ```
 
+### macOS
+
+Experimental native build against the Homebrew GTK4 stack —
+see [docs/BUILDING-macOS.md](docs/BUILDING-macOS.md).
+
 ## AI Use Disclosure
 
 This project was developed with the assistance of AI coding agents.
