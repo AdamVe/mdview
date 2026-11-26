@@ -10,6 +10,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # restores the GNOME runtime/SDK and flatpak-builder's source downloads;
+      # keyed on the manifest so any version/hash change starts a fresh cache
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/flatpak
+            build-flatpak/build
+            build-flatpak/repo
+          key: flatpak-v1-${{ hashFiles('packaging/flatpak/*.yaml') }}
+
       - name: Install flatpak tooling
         run: |
           sudo apt-get update
