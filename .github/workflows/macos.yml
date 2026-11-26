@@ -1,0 +1,29 @@
+name: macOS
+
+# Smoke-builds the gtk frontend on macOS; scoped to the porting branch and PRs
+# until macOS becomes a supported platform.
+
+on:
+  push:
+    branches: ['adamve/feature/macos-build']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install llvm gtkmm4 libsoup@3 cmark-gfm meson ninja pkg-config
+
+      - name: Build
+        run: |
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$(brew --prefix libsoup@3)/lib/pkgconfig"
+          meson setup build -Dfrontend=gtk
+          ninja -C build
+
+      - name: Test
+        run: meson test -C build --suite parser
