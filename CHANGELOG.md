@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Experimental native macOS build: Homebrew toolchain guide
+  (`docs/BUILDING-macOS.md`), a macOS CI smoke job, and a fallback to
+  `std::map`/`std::set` where the C++ standard library lacks
+  `std::flat_map`/`std::flat_set`
+
 ## [0.1.0] - 2026-11-26
 
 Initial release of mdview, a fast native GTK4 markdown viewer.
