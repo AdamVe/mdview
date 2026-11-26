@@ -59,15 +59,28 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      # draft body = the changelog section for this tag, between its heading and the next
+      - name: Extract changelog section
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { in_block = 1; next }
+            in_block && (/^## \[/ || /^\[/) { exit }
+            in_block { print }
+          ' CHANGELOG.md | sed -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba' -e '}' > release-notes.md
+          cat release-notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
+          body_path: release-notes.md
           # dev tags (contain '-') are marked pre-release; stable ones are not
           prerelease: ${{ contains(github.ref_name, '-') }}
           # land as a draft so the description can be edited before publishing
           draft: true
-          generate_release_notes: true

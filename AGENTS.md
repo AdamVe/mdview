@@ -54,6 +54,13 @@ Renders the full document height to a PNG via snapshot + GskRenderer (cairo back
 3. Add `std::visit` arm in `frontends/gtk/src/markdown_view.cpp` `insert_node()`
 4. Add required TextTags in `markdown_view.cpp` `setup_tags()`
 
+## Changelog
+- Every feature or fix adds a bullet under `## [Unreleased]` in `CHANGELOG.md`
+  (Keep a Changelog 1.1.0 format; use Added / Changed / Fixed / Performance sections).
+- At release: rename `[Unreleased]` to `[<version>] - <YYYY-MM-DD>`, open a fresh empty
+  `[Unreleased]` above it, and update the link definitions at the bottom. The metainfo
+  `<release>` date must match.
+
 ## Style
 - **Clang-format:** LLVM-based, 4-space indent, 120-col limit, BreakBeforeBraces: Custom (K&R-ish), `InsertNewlineAtEOF: true`
 - **C++ standard:** C++26 (meson `cpp_std=c++26`, GCC 15). In use: `std::expected` + `[[unlikely]]`
