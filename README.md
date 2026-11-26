@@ -39,7 +39,7 @@ ninja -C build install
 
 ### macOS
 
-Experimental native build via Homebrew (Apple Silicon) or Nix (Intel) —
+Experimental native build via Homebrew —
 see [docs/BUILDING-macOS.md](docs/BUILDING-macOS.md).
 
 ## AI Use Disclosure
