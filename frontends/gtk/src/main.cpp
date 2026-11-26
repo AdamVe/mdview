@@ -1,10 +1,10 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <graphene.h>
-#include <print>
 #include "app.hpp"
 #include "markdown_view.hpp"
 
@@ -65,9 +65,9 @@ namespace {
                         g_object_get(t, "scale", &sc, "family", &fam, "rise", &rise, nullptr);
                         gboolean has_scale = FALSE, has_lh = FALSE;
                         g_object_get(t, "scale-set", &has_scale, "line-height-set", &has_lh, nullptr);
-                        std::print(stderr, "[tags] line={} tag={:p} scale={}(\{}) fam={} rise={} lhset={}\n", line,
-                                   static_cast<const void *>(t), sc, static_cast<int>(has_scale), fam ? fam : "-", rise,
-                                   static_cast<int>(has_lh));
+                        std::fprintf(stderr, "[tags] line=%d tag=%p scale=%g(%d) fam=%s rise=%d lhset=%d\n", line,
+                                     static_cast<const void *>(t), sc, static_cast<int>(has_scale), fam ? fam : "-",
+                                     rise, static_cast<int>(has_lh));
                         g_free(fam);
                     }
                     g_slist_free(tags);
@@ -86,7 +86,7 @@ namespace {
                         GdkRectangle r{};
                         gtk_text_view_get_iter_location(tv, &it, &r);
                         gunichar ch = gtk_text_iter_get_char(&it);
-                        std::print(stderr, "[grid] line={} x={} y={} last_cp={:04X}\n", line, r.x, r.y, ch);
+                        std::fprintf(stderr, "[grid] line=%d x=%d y=%d last_cp=%04X\n", line, r.x, r.y, ch);
                     }
                 }
             }
@@ -133,16 +133,22 @@ int main(int argc, char *argv[]) {
             const std::string_view arg = argv[++i];
             if (std::from_chars(arg.data(), arg.data() + arg.size(), width).ec != std::errc{} || width < 16 ||
                 width > 20000) {
-                std::print(stderr, "mdview: invalid --width '{}' (expected 16..20000)\n", arg);
+                std::fprintf(stderr, "mdview: invalid --width '%.*s' (expected 16..20000)\n", static_cast<int>(arg.size()),
+                             arg.data());
                 return 2;
             }
         } else if (std::strcmp(argv[i], "--zoom") == 0 && i + 1 < argc) {
             const std::string_view arg = argv[++i];
-            if (std::from_chars(arg.data(), arg.data() + arg.size(), zoom).ec != std::errc{} || !std::isfinite(zoom) ||
-                zoom < 0.2f || zoom > 4.0f) {
-                std::print(stderr, "mdview: invalid --zoom '{}' (expected finite 0.2..4.0)\n", arg);
+            // strtod rather than from_chars<float>: Apple's libc++ only gained float
+            // charconv in macOS 13.3 and the symbol is absent on older systems.
+            char *end = nullptr;
+            const double v = std::strtod(arg.data(), &end);
+            if (end != arg.data() + arg.size() || !std::isfinite(v) || v < 0.2 || v > 4.0) {
+                std::fprintf(stderr, "mdview: invalid --zoom '%.*s' (expected finite 0.2..4.0)\n",
+                             static_cast<int>(arg.size()), arg.data());
                 return 2;
             }
+            zoom = static_cast<float>(v);
         } else if (argv[i][0] != '-') {
             doc_path = argv[i];
         }
@@ -150,7 +156,7 @@ int main(int argc, char *argv[]) {
 
     if (!png_out.empty()) {
         if (doc_path.empty()) {
-            std::print(stderr, "mdview: --render-png requires a markdown file\n");
+            std::fprintf(stderr, "mdview: --render-png requires a markdown file\n");
             return 2;
         }
         return render_png_mode(doc_path, png_out, width > 0 ? width : 1280, zoom);

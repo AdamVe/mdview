@@ -5,6 +5,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <gio/gio.h>
@@ -12,7 +13,6 @@
 #include <iomanip>
 #include <iostream>
 #include <libsoup/soup.h>
-#include <print>
 #include <sstream>
 #include "mdview/parser.hpp"
 #ifdef USE_ADWAITA
@@ -835,7 +835,7 @@ void MarkdownView::insert_list_entries(const std::vector<mdview::ListEntry> &ent
         Glib::ustring marker;
         switch (entry.kind) {
             case 'o':
-                marker = std::format("{}. ", number++);
+                marker = std::to_string(number++) + ". ";
                 break;
             case 't':
                 marker = entry.checked ? "\u2611 " : "\u2610 "; // ballot box with / without X
@@ -919,7 +919,7 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
     if (char_width <= 0)
         char_width = 12;
     if (g_getenv("MDVIEW_DEBUG_TABLE"))
-        std::print(stderr, "[table] cw={} base_pt={} zoom={}\n", char_width, base_pt, static_cast<double>(m_zoom));
+        std::fprintf(stderr, "[table] cw=%d base_pt=%g zoom=%g\n", char_width, base_pt, static_cast<double>(m_zoom));
 
     // Split text into grid clusters: a base character plus its zero-width
     // extenders (combining marks, variation selectors, skin-tone modifiers),
@@ -1145,11 +1145,11 @@ void MarkdownView::insert_node(const mdview::Table &t, Gtk::TextIter &iter) {
                 continue;
             }
             if (dbg)
-                std::print(stderr,
-                           "[table] '{}' px={} cw={} cols={} fam='{}' h={} asc={} desc={} cell={}/{} fit={:.3f} "
-                           "rise={}\n",
-                           std::string_view(cl.text.raw()), m.px, char_width, cluster_cols(cl.text),
-                           std::string_view(m.family.raw()), m.font_h, m.asc, m.desc, cell_asc, cell_desc, fit, rise);
+                std::fprintf(stderr,
+                             "[table] '%s' px=%d cw=%d cols=%zu fam='%s' h=%d asc=%d desc=%d cell=%d/%d fit=%.3f "
+                             "rise=%d\n",
+                             cl.text.c_str(), m.px, char_width, cluster_cols(cl.text), m.family.c_str(), m.font_h, m.asc,
+                             m.desc, cell_asc, cell_desc, fit, rise);
             // The buffer-wide zoom tag also carries `scale`, and Pango
             // multiplies coexisting scale attributes rather than letting one
             // win, so this run's scale stays zoom-independent: zoom scales the

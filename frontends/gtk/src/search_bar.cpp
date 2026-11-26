@@ -1,5 +1,5 @@
 #include "search_bar.hpp"
-#include <format>
+#include <string>
 
 namespace {
     constexpr const char *s_search_bar_ui_path = "/com/adamve/mdview/search_bar.ui";
@@ -248,9 +248,8 @@ void SearchBar::update_match_count() {
         return;
 
     if (m_has_matches && m_current_match_index >= 0) {
-        const std::string count_text = m_matches_capped
-                                               ? std::format("{} / {}+", m_current_match_index + 1, m_total_matches)
-                                               : std::format("{} / {}", m_current_match_index + 1, m_total_matches);
+        const std::string count_text = std::to_string(m_current_match_index + 1) + " / " +
+                                       std::to_string(m_total_matches) + (m_matches_capped ? "+" : "");
         m_match_label->set_text(count_text);
     } else {
         m_match_label->set_text("No match");
